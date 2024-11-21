@@ -14,7 +14,7 @@ else:
 
 setup(
     name="diffsynth-engine",
-    version="1.0.0",
+    version="0.0.1",
     description="Enjoy the magic of Diffusion models!",
     author="MuseAI x ModelScope",
     packages=find_packages(),
@@ -25,6 +25,6 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
     ],
-    package_data={"diffsynth-engine": ["tokenizer_configs/**/**/*.*"]},
-    python_requires='>=3.6',
+    package_data={"diffsynth-engine": ["conf/tokenizer/**/**/*.*"]},
+    python_requires='>=3.10',
 )
