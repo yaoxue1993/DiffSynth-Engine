@@ -108,7 +108,7 @@ class VAEDecoder(nn.Module):
             return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
 
         # 1. pre-process
-        sample = sample / self.scaling_factor
+        sample = (sample + self.shift_factor) / self.scaling_factor
         if self.use_post_quant_conv:
             sample = self.post_quant_conv(sample)
         hidden_states = self.conv_in(sample)

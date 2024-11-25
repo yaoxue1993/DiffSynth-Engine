@@ -182,7 +182,8 @@ class LoRAConv2d(nn.Conv2d):
         # see: https://github.com/bmaltais/kohya_ss/blob/2accb1305979ba62f5077a23aabac23b4c37e935/networks/lora_diffusers.py#L129      
         # refer from diffusers
         up_conv = torch.nn.utils.skip_init(nn.Conv2d, 
-                                           rank, 
+                                           rank,
+                                           self.out_channels, 
                                            kernel_size=(1, 1), 
                                            stride=(1, 1),
                                            bias=False,
