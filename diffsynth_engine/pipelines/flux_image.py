@@ -6,7 +6,7 @@ from tqdm import tqdm
 from PIL import Image
 
 from diffsynth_engine.models import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
-from diffsynth_engine.models.tiler import FastTileWorker
+from diffsynth_engine.models.basic.tiler import FastTileWorker
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.schedulers import FlowMatchScheduler

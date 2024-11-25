@@ -2,17 +2,62 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from diffsynth_engine.models.sd_vae import VAEAttentionBlock, SDVAEDecoderStateDictConverter, SDVAEEncoderStateDictConverter
-from diffsynth_engine.models.sd_unet import ResnetBlock, UpSampler, DownSampler
-from diffsynth_engine.models.tiler import TileWorker
+from diffsynth_engine.models.basic.attention import Attention
+from diffsynth_engine.models.basic.unet_helper import ResnetBlock, UpSampler, DownSampler
+from diffsynth_engine.models.basic.tiler import TileWorker
 
 
-class SD3VAEDecoder(nn.Module):
-    def __init__(self):
+class VAEAttentionBlock(nn.Module):
+
+    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, norm_num_groups=32, eps=1e-5):
         super().__init__()
-        self.scaling_factor = 1.5305 # Different from SD 1.x
-        self.shift_factor = 0.0609 # Different from SD 1.x
-        self.conv_in = nn.Conv2d(16, 512, kernel_size=3, padding=1) # Different from SD 1.x
+        inner_dim = num_attention_heads * attention_head_dim
+
+        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True)
+
+        self.transformer_blocks = nn.ModuleList([
+            Attention(
+                inner_dim,
+                num_attention_heads,
+                attention_head_dim,
+                bias_q=True,
+                bias_kv=True,
+                bias_out=True
+            )
+            for d in range(num_layers)
+        ])
+
+    def forward(self, hidden_states, time_emb, text_emb, res_stack):
+        batch, _, height, width = hidden_states.shape
+        residual = hidden_states
+
+        hidden_states = self.norm(hidden_states)
+        inner_dim = hidden_states.shape[1]
+        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * width, inner_dim)
+
+        for block in self.transformer_blocks:
+            hidden_states = block(hidden_states)
+
+        hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
+        hidden_states = hidden_states + residual
+
+        return hidden_states, time_emb, text_emb, res_stack
+
+
+class VAEDecoder(nn.Module):
+    def __init__(self, 
+        latent_channels:int=4,
+        scaling_factor:float=0.18215,
+        shift_factor:float=0,
+        use_post_quant_conv:bool=True
+    ):
+        super().__init__()
+        self.scaling_factor = scaling_factor
+        self.shift_factor = shift_factor
+        self.use_post_quant_conv = use_post_quant_conv
+        if use_post_quant_conv:
+            self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, kernel_size=1)
+        self.conv_in = nn.Conv2d(latent_channels, 512, kernel_size=3, padding=1)
 
         self.blocks = nn.ModuleList([
             # UNetMidBlock2D
@@ -40,11 +85,11 @@ class SD3VAEDecoder(nn.Module):
             ResnetBlock(128, 128, eps=1e-6),
         ])
 
-        self.conv_norm_out = nn.GroupNorm(num_channels=128, num_groups=32, eps=1e-6)
+        self.conv_norm_out = nn.GroupNorm(num_channels=128, num_groups=32, eps=1e-5)
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(128, 3, kernel_size=3, padding=1)
 
-    def tiled_forward(self, sample, tile_size=64, tile_stride=32):
+    def _tiled_forward(self, sample, tile_size=64, tile_stride=32):
         hidden_states = TileWorker().tiled_forward(
             lambda x: self.forward(x),
             sample,
@@ -56,13 +101,17 @@ class SD3VAEDecoder(nn.Module):
         return hidden_states
 
     def forward(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
+        original_dtype = sample.dtype
+        sample = sample.to(dtype=next(iter(self.parameters())).dtype)
         # For VAE Decoder, we do not need to apply the tiler on each layer.
         if tiled:
-            return self.tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
+            return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
 
         # 1. pre-process
-        hidden_states = sample / self.scaling_factor + self.shift_factor
-        hidden_states = self.conv_in(hidden_states)
+        sample = sample / self.scaling_factor
+        if self.use_post_quant_conv:
+            sample = self.post_quant_conv(sample)
+        hidden_states = self.conv_in(sample)
         time_emb = None
         text_emb = None
         res_stack = None
@@ -75,19 +124,24 @@ class SD3VAEDecoder(nn.Module):
         hidden_states = self.conv_norm_out(hidden_states)
         hidden_states = self.conv_act(hidden_states)
         hidden_states = self.conv_out(hidden_states)
+        hidden_states = hidden_states.to(original_dtype)
 
         return hidden_states
 
-    @staticmethod
-    def state_dict_converter():
-        return SDVAEDecoderStateDictConverter()
 
-
-class SD3VAEEncoder(nn.Module):
-    def __init__(self):
+class VAEEncoder(nn.Module):
+    def __init__(self, 
+        latent_channels:int=4,
+        scaling_factor:float=0.18215,
+        shift_factor:float=0,
+        use_quant_conv:bool=True
+    ):
         super().__init__()
-        self.scaling_factor = 1.5305 # Different from SD 1.x
-        self.shift_factor = 0.0609 # Different from SD 1.x
+        self.scaling_factor = scaling_factor
+        self.shift_factor = shift_factor
+        self.use_quant_conv = use_quant_conv
+        if use_quant_conv:
+            self.quant_conv = nn.Conv2d(latent_channels, latent_channels, kernel_size=1)
         self.conv_in = nn.Conv2d(3, 128, kernel_size=3, padding=1)
 
         self.blocks = nn.ModuleList([
@@ -114,9 +168,9 @@ class SD3VAEEncoder(nn.Module):
 
         self.conv_norm_out = nn.GroupNorm(num_channels=512, num_groups=32, eps=1e-6)
         self.conv_act = nn.SiLU()
-        self.conv_out = nn.Conv2d(512, 32, kernel_size=3, padding=1)
+        self.conv_out = nn.Conv2d(512, 8, kernel_size=3, padding=1)
 
-    def tiled_forward(self, sample, tile_size=64, tile_stride=32):
+    def _tiled_forward(self, sample, tile_size=64, tile_stride=32):
         hidden_states = TileWorker().tiled_forward(
             lambda x: self.forward(x),
             sample,
@@ -128,9 +182,11 @@ class SD3VAEEncoder(nn.Module):
         return hidden_states
 
     def forward(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
+        original_dtype = sample.dtype
+        sample = sample.to(dtype=next(iter(self.parameters())).dtype)
         # For VAE Decoder, we do not need to apply the tiler on each layer.
         if tiled:
-            return self.tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
+            return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
 
         # 1. pre-process
         hidden_states = self.conv_in(sample)
@@ -146,9 +202,11 @@ class SD3VAEEncoder(nn.Module):
         hidden_states = self.conv_norm_out(hidden_states)
         hidden_states = self.conv_act(hidden_states)
         hidden_states = self.conv_out(hidden_states)
-        hidden_states = hidden_states[:, :16]
+        if self.use_quant_conv:
+            hidden_states = self.quant_conv(hidden_states)
+        hidden_states = hidden_states[:, :self.latent_channels]
         hidden_states = (hidden_states - self.shift_factor) * self.scaling_factor
-
+        hidden_states = hidden_states.to(original_dtype)
         return hidden_states
 
     def encode_video(self, sample, batch_size=8):
@@ -167,7 +225,3 @@ class SD3VAEEncoder(nn.Module):
 
         hidden_states = torch.concat(hidden_states, dim=2)
         return hidden_states
-
-    @staticmethod
-    def state_dict_converter():
-        return SDVAEEncoderStateDictConverter()

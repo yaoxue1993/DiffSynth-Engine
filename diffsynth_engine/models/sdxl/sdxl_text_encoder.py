@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from diffsynth_engine.models.clip import CLIPEncoderLayer
+from diffsynth_engine.models.components.clip import CLIPEncoderLayer
 
 
 class SDXLTextEncoder(nn.Module):

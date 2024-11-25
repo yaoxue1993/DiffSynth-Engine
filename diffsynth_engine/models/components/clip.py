@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from diffsynth_engine.models.attention import Attention
+from diffsynth_engine.models.basic.attention import Attention
 
 
 class CLIPEncoderLayer(nn.Module):

@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import math
 
-
 def get_timestep_embedding(
         timesteps: torch.Tensor,
         embedding_dim: int,
@@ -61,5 +60,19 @@ class TemporalTimesteps(nn.Module):
             downscale_freq_shift=self.downscale_freq_shift,
         )
         return t_emb
+    
+class TimestepEmbeddings(nn.Module):
+    def __init__(self, dim_in, dim_out):
+        super().__init__()
+        self.time_proj = TemporalTimesteps(num_channels=dim_in, flip_sin_to_cos=True, downscale_freq_shift=0)
+        self.timestep_embedder = nn.Sequential(
+            nn.Linear(dim_in, dim_out), 
+            nn.SiLU(), 
+            nn.Linear(dim_out, dim_out)
+        )
 
-# TODO: add SVDUNet
+    def forward(self, timestep, dtype):
+        time_emb = self.time_proj(timestep).to(dtype)
+        time_emb = self.timestep_embedder(time_emb)
+        return time_emb
+    

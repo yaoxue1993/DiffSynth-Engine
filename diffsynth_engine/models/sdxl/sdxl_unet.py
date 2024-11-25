@@ -1,19 +1,22 @@
 import torch
 import torch.nn as nn
 
-from diffsynth_engine.models.sd_unet import Timesteps, ResnetBlock, AttentionBlock, PushBlock, PopBlock, DownSampler, UpSampler
+from diffsynth_engine.models.basic.timestep import TimestepEmbeddings, TemporalTimesteps
+from diffsynth_engine.models.basic.unet_helper import (
+    ResnetBlock, 
+    AttentionBlock, 
+    PushBlock, 
+    DownSampler, 
+    PopBlock, 
+    UpSampler
+)
 
 
 class SDXLUNet(nn.Module):
     def __init__(self, is_kolors=False):
         super().__init__()
-        self.time_proj = Timesteps(320)
-        self.time_embedding = nn.Sequential(
-            nn.Linear(320, 1280),
-            nn.SiLU(),
-            nn.Linear(1280, 1280)
-        )
-        self.add_time_proj = Timesteps(256)
+        self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280)
+        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.add_time_embedding = nn.Sequential(
             nn.Linear(5632 if is_kolors else 2816, 1280),
             nn.SiLU(),
@@ -94,10 +97,9 @@ class SDXLUNet(nn.Module):
             use_gradient_checkpointing=False,
             **kwargs
     ):
-        # 1. time
-        t_emb = self.time_proj(timestep).to(sample.dtype)
-        t_emb = self.time_embedding(t_emb)
-
+        # 1. time embedding
+        t_emb = self.time_embedding(timestep, dtype=sample.dtype)
+        ## add embedding
         time_embeds = self.add_time_proj(add_time_id)
         time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
         add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)

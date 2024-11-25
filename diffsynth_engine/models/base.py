@@ -1,4 +1,5 @@
 import os
+import torch
 import torch.nn as nn
 from typing import Dict, Union
 
@@ -13,5 +14,5 @@ class BaseModel(nn.Module):
         raise NotImplementedError()
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"]):
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor]):
         raise NotImplementedError()
