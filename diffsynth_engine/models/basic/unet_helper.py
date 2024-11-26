@@ -5,7 +5,7 @@ import math
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.basic.tiler import TileWorker
 
-    
+
 class GEGLU(nn.Module):
 
     def __init__(self, dim_in, dim_out):
@@ -34,7 +34,6 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim, elementwise_affine=True)
         self.act_fn = GEGLU(dim, dim * 4)
         self.ff = nn.Linear(dim * 4, dim)
-
 
     def forward(self, hidden_states, encoder_hidden_states, ipadapter_kwargs=None):
         # 1. Self-Attention

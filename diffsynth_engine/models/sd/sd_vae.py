@@ -1,4 +1,6 @@
 from diffsynth_engine.models.components.vae import VAEDecoder, VAEEncoder
+
+
 class SDVAEEncoder(VAEEncoder):
     def __init__(self):
         super().__init__(
@@ -8,6 +10,7 @@ class SDVAEEncoder(VAEEncoder):
             use_quant_conv=True
         )
 
+
 class SDVAEDecoder(VAEDecoder):
     def __init__(self):
         super().__init__(
@@ -16,4 +19,3 @@ class SDVAEDecoder(VAEDecoder):
             shift_factor=None,
             use_post_quant_conv=True
         )
-

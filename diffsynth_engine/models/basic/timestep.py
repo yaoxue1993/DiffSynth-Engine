@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
+
 def get_timestep_embedding(
         timesteps: torch.Tensor,
         embedding_dim: int,
@@ -75,4 +76,3 @@ class TimestepEmbeddings(nn.Module):
         time_emb = self.time_proj(timestep).to(dtype)
         time_emb = self.timestep_embedder(time_emb)
         return time_emb
-    

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from PIL import Image
 
 from diffsynth_engine.models import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
-from diffsynth_engine.models.sdxl_unet import PushBlock, PopBlock
+from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.schedulers import EnhancedDDIMScheduler

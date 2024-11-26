@@ -1,11 +1,8 @@
 torch>=2.4.0
 cupy-cuda12x
-transformers==4.44.1
-controlnet-aux==0.0.7
-imageio[ffmpeg]
 safetensors
 einops
 sentencepiece
-protobuf
 pydantic
+huggingface-hub
 modelscope
