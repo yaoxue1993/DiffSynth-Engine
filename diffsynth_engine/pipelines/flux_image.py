@@ -7,9 +7,11 @@ from PIL import Image
 
 from diffsynth_engine.models import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
 from diffsynth_engine.models.basic.tiler import FastTileWorker
+from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.schedulers import FlowMatchScheduler
+from diffsynth_engine.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 
 
 class FluxImagePipeline(BasePipeline):
@@ -18,14 +20,15 @@ class FluxImagePipeline(BasePipeline):
         super().__init__(device=device, torch_dtype=torch_dtype)
         self.scheduler = FlowMatchScheduler()
         # models
-        self.tokenizer_1: CLIPTokenizer = None
-        self.tokenizer_2: T5TokenizerFast = None
-        self.text_encoder_1: FluxTextEncoder1 = None
-        self.text_encoder_2: FluxTextEncoder2 = None
-        self.dit: FluxDiT = None
-        self.vae_decoder: FluxVAEDecoder = None
-        self.vae_encoder: FluxVAEEncoder = None
-        self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
+        with no_init_weights():
+            self.tokenizer_1: CLIPTokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+            self.tokenizer_2: T5TokenizerFast = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
+            self.text_encoder_1: FluxTextEncoder1 = FluxTextEncoder1()
+            self.text_encoder_2: FluxTextEncoder2 = FluxTextEncoder2()
+            self.dit: FluxDiT = FluxDiT()
+            self.vae_decoder: FluxVAEDecoder = FluxVAEDecoder()
+            self.vae_encoder: FluxVAEEncoder = FluxVAEEncoder()
+            self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
 
     @classmethod
     def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike]):

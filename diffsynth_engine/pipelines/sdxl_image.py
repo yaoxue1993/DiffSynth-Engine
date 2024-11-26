@@ -7,10 +7,12 @@ from PIL import Image
 
 from diffsynth_engine.models import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
 from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
+from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.schedulers import EnhancedDDIMScheduler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
+from diffsynth_engine.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
 
 
 # TODO: add controlnet/ipadapter/kolors
@@ -20,14 +22,15 @@ class SDXLImagePipeline(BasePipeline):
         super().__init__(device=device, torch_dtype=torch_dtype)
         self.scheduler = EnhancedDDIMScheduler()
         # models
-        self.tokenizer: CLIPTokenizer = None
-        self.tokenizer_2: CLIPTokenizer = None
-        self.text_encoder: SDXLTextEncoder = None
-        self.text_encoder_2: SDXLTextEncoder2 = None
-        self.unet: SDXLUNet = None
-        self.vae_decoder: SDXLVAEDecoder = None
-        self.vae_encoder: SDXLVAEEncoder = None
-        self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
+        with no_init_weights():
+            self.tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
+            self.tokenizer_2: CLIPTokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
+            self.text_encoder: SDXLTextEncoder = SDXLTextEncoder()
+            self.text_encoder_2: SDXLTextEncoder2 = SDXLTextEncoder2()
+            self.unet: SDXLUNet = SDXLUNet()
+            self.vae_decoder: SDXLVAEDecoder = SDXLVAEDecoder()
+            self.vae_encoder: SDXLVAEEncoder = SDXLVAEEncoder()
+            self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
 
     @classmethod
     def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike]):
