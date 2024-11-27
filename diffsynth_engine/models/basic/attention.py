@@ -15,17 +15,17 @@ def low_version_attention(query, key, value, attn_bias=None):
 
 class Attention(nn.Module):
 
-    def __init__(self, q_dim, num_heads, head_dim, kv_dim=None, bias_q=False, bias_kv=False, bias_out=False):
+    def __init__(self, q_dim, num_heads, head_dim, kv_dim=None, bias_q=False, bias_kv=False, bias_out=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
         dim_inner = head_dim * num_heads
         kv_dim = kv_dim if kv_dim is not None else q_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
 
-        self.to_q = nn.Linear(q_dim, dim_inner, bias=bias_q)
-        self.to_k = nn.Linear(kv_dim, dim_inner, bias=bias_kv)
-        self.to_v = nn.Linear(kv_dim, dim_inner, bias=bias_kv)
-        self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out)
+        self.to_q = nn.Linear(q_dim, dim_inner, bias=bias_q, device=device, dtype=dtype)
+        self.to_k = nn.Linear(kv_dim, dim_inner, bias=bias_kv, device=device, dtype=dtype)
+        self.to_v = nn.Linear(kv_dim, dim_inner, bias=bias_kv, device=device, dtype=dtype)
+        self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out, device=device, dtype=dtype)
 
     def interact_with_ipadapter(self, hidden_states, q, ip_k, ip_v, scale=1.0):
         batch_size = q.shape[0]

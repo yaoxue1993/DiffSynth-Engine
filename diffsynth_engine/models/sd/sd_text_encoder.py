@@ -4,6 +4,7 @@ import logging
 from typing import Dict
 from diffsynth_engine.models.components.clip import CLIPEncoderLayer
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.utils import no_init_weights
 logger = logging.getLogger(__name__)
 
 class SDTextEncoderStateDictConverter(StateDictConverter):
@@ -264,23 +265,23 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
 class SDTextEncoder(PreTrainedModel):
     converter = SDTextEncoderStateDictConverter()
 
-    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12, encoder_intermediate_size=3072):
+    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12, encoder_intermediate_size=3072, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
 
         # token_embedding
-        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim, device=device, dtype=dtype)
 
         # position_embeds (This is a fixed tensor)
-        self.position_embeds = nn.Parameter(torch.zeros(1, max_position_embeddings, embed_dim))
+        self.position_embeds = nn.Parameter(torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
 
         # encoders
-        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size) for _ in range(num_encoder_layers)])
+        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype) for _ in range(num_encoder_layers)])
 
         # attn_mask
         self.attn_mask = self.attention_mask(max_position_embeddings)
 
         # final_layer_norm
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
+        self.final_layer_norm = nn.LayerNorm(embed_dim, device=device, dtype=dtype)
 
     def attention_mask(self, length):
         mask = torch.empty(length, length)
@@ -297,3 +298,20 @@ class SDTextEncoder(PreTrainedModel):
                 break
         embeds = self.final_layer_norm(embeds)
         return embeds
+    
+    @classmethod
+    def from_state_dict(
+        cls, 
+        state_dict:Dict[str, torch.Tensor],
+        device:str,
+        dtype:torch.dtype,
+        embed_dim:int=768, 
+        vocab_size:int=49408, 
+        max_position_embeddings:int=77, 
+        num_encoder_layers:int=12, 
+        encoder_intermediate_size:int=3072,
+    ):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim, vocab_size=vocab_size, max_position_embeddings=max_position_embeddings, num_encoder_layers=num_encoder_layers, encoder_intermediate_size=encoder_intermediate_size)
+        model.load_state_dict(state_dict)
+        return model

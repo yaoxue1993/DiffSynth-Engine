@@ -8,9 +8,9 @@ from diffsynth_engine.models.basic.tiler import TileWorker
 
 class GEGLU(nn.Module):
 
-    def __init__(self, dim_in, dim_out):
+    def __init__(self, dim_in, dim_out, device:str, dtype:torch.dtype):
         super().__init__()
-        self.proj = nn.Linear(dim_in, dim_out * 2)
+        self.proj = nn.Linear(dim_in, dim_out * 2, device=device, dtype=dtype)
 
     def forward(self, hidden_states):
         hidden_states, gate = self.proj(hidden_states).chunk(2, dim=-1)
@@ -19,21 +19,21 @@ class GEGLU(nn.Module):
 
 class BasicTransformerBlock(nn.Module):
 
-    def __init__(self, dim, num_attention_heads, attention_head_dim, cross_attention_dim):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, cross_attention_dim, device:str, dtype:torch.dtype):
         super().__init__()
 
         # 1. Self-Attn
-        self.norm1 = nn.LayerNorm(dim, elementwise_affine=True)
-        self.attn1 = Attention(q_dim=dim, num_heads=num_attention_heads, head_dim=attention_head_dim, bias_out=True)
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=True, device=device, dtype=dtype)
+        self.attn1 = Attention(q_dim=dim, num_heads=num_attention_heads, head_dim=attention_head_dim, bias_out=True, device=device, dtype=dtype)
 
         # 2. Cross-Attn
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=True)
-        self.attn2 = Attention(q_dim=dim, kv_dim=cross_attention_dim, num_heads=num_attention_heads, head_dim=attention_head_dim, bias_out=True)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=True, device=device, dtype=dtype)
+        self.attn2 = Attention(q_dim=dim, kv_dim=cross_attention_dim, num_heads=num_attention_heads, head_dim=attention_head_dim, bias_out=True, device=device, dtype=dtype)
 
         # 3. Feed-forward
-        self.norm3 = nn.LayerNorm(dim, elementwise_affine=True)
-        self.act_fn = GEGLU(dim, dim * 4)
-        self.ff = nn.Linear(dim * 4, dim)
+        self.norm3 = nn.LayerNorm(dim, elementwise_affine=True, device=device, dtype=dtype)
+        self.act_fn = GEGLU(dim, dim * 4, device=device, dtype=dtype)
+        self.ff = nn.Linear(dim * 4, dim, device=device, dtype=dtype)
 
     def forward(self, hidden_states, encoder_hidden_states, ipadapter_kwargs=None):
         # 1. Self-Attention
@@ -56,9 +56,9 @@ class BasicTransformerBlock(nn.Module):
 
 
 class DownSampler(nn.Module):
-    def __init__(self, channels, padding=1, extra_padding=False):
+    def __init__(self, channels, padding=1, extra_padding=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
-        self.conv = nn.Conv2d(channels, channels, 3, stride=2, padding=padding)
+        self.conv = nn.Conv2d(channels, channels, 3, stride=2, padding=padding, device=device, dtype=dtype)
         self.extra_padding = extra_padding
 
     def forward(self, hidden_states, time_emb, text_emb, res_stack, **kwargs):
@@ -69,9 +69,9 @@ class DownSampler(nn.Module):
 
 
 class UpSampler(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, device:str, dtype:torch.dtype):
         super().__init__()
-        self.conv = nn.Conv2d(channels, channels, 3, padding=1)
+        self.conv = nn.Conv2d(channels, channels, 3, padding=1, device=device, dtype=dtype)
 
     def forward(self, hidden_states, time_emb, text_emb, res_stack, **kwargs):
         hidden_states = nn.functional.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
@@ -80,18 +80,18 @@ class UpSampler(nn.Module):
 
 
 class ResnetBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, temb_channels=None, groups=32, eps=1e-5):
+    def __init__(self, in_channels, out_channels, temb_channels=None, groups=32, eps=1e-5, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
-        self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True, device=device, dtype=dtype)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype)
         if temb_channels is not None:
-            self.time_emb_proj = nn.Linear(temb_channels, out_channels)
-        self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            self.time_emb_proj = nn.Linear(temb_channels, out_channels, device=device, dtype=dtype)
+        self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True, device=device, dtype=dtype)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, device=device, dtype=dtype)
         self.nonlinearity = nn.SiLU()
         self.conv_shortcut = None
         if in_channels != out_channels:
-            self.conv_shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=True)
+            self.conv_shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=True, device=device, dtype=dtype)
 
     def forward(self, hidden_states, time_emb, text_emb, res_stack, **kwargs):
         x = hidden_states
@@ -112,26 +112,27 @@ class ResnetBlock(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-
-    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, cross_attention_dim=None, norm_num_groups=32, eps=1e-5, need_proj_out=True):
+    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, cross_attention_dim=None, norm_num_groups=32, eps=1e-5, need_proj_out=True, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
         inner_dim = num_attention_heads * attention_head_dim
 
-        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True)
-        self.proj_in = nn.Linear(in_channels, inner_dim)
+        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True, device=device, dtype=dtype)
+        self.proj_in = nn.Linear(in_channels, inner_dim, device=device, dtype=dtype)
 
         self.transformer_blocks = nn.ModuleList([
             BasicTransformerBlock(
                 inner_dim,
                 num_attention_heads,
                 attention_head_dim,
-                cross_attention_dim=cross_attention_dim
+                cross_attention_dim=cross_attention_dim,
+                device=device,
+                dtype=dtype
             )
             for d in range(num_layers)
         ])
         self.need_proj_out = need_proj_out
         if need_proj_out:
-            self.proj_out = nn.Linear(inner_dim, in_channels)
+            self.proj_out = nn.Linear(inner_dim, in_channels, device=device, dtype=dtype)
 
     def forward(
             self,

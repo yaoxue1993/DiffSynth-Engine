@@ -1,21 +1,24 @@
 from diffsynth_engine.models.components.vae import VAEDecoder, VAEEncoder
-
+import torch
 
 class SDXLVAEEncoder(VAEEncoder):
-    def __init__(self):
+    def __init__(self, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__(
             latent_channels=4,  
             scaling_factor=0.13025,   
             shift_factor=None,
-            use_quant_conv=True            
+            use_quant_conv=True,
+            device=device,
+            dtype=dtype
         )
 
-
 class SDXLVAEDecoder(VAEDecoder):
-    def __init__(self):
+    def __init__(self, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__(
             latent_channels=4,  
             scaling_factor=0.13025,   
             shift_factor=None,
-            use_post_quant_conv=True            
+            use_post_quant_conv=True,
+            device=device,
+            dtype=dtype
         )

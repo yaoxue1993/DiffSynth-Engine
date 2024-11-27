@@ -5,13 +5,13 @@ from diffsynth_engine.models.basic.attention import Attention
 
 
 class CLIPEncoderLayer(nn.Module):
-    def __init__(self, embed_dim, intermediate_size, num_heads=12, head_dim=64, use_quick_gelu=True):
+    def __init__(self, embed_dim, intermediate_size, num_heads=12, head_dim=64, use_quick_gelu=True, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
-        self.attn = Attention(q_dim=embed_dim, num_heads=num_heads, head_dim=head_dim, bias_q=True, bias_kv=True, bias_out=True)
-        self.layer_norm1 = nn.LayerNorm(embed_dim)
-        self.layer_norm2 = nn.LayerNorm(embed_dim)
-        self.fc1 = nn.Linear(embed_dim, intermediate_size)
-        self.fc2 = nn.Linear(intermediate_size, embed_dim)
+        self.attn = Attention(q_dim=embed_dim, num_heads=num_heads, head_dim=head_dim, bias_q=True, bias_kv=True, bias_out=True, device=device, dtype=dtype)
+        self.layer_norm1 = nn.LayerNorm(embed_dim, device=device, dtype=dtype)
+        self.layer_norm2 = nn.LayerNorm(embed_dim, device=device, dtype=dtype)
+        self.fc1 = nn.Linear(embed_dim, intermediate_size, device=device, dtype=dtype)
+        self.fc2 = nn.Linear(intermediate_size, embed_dim, device=device, dtype=dtype)
 
         self.use_quick_gelu = use_quick_gelu
 

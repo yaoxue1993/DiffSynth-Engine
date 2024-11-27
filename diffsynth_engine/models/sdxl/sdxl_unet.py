@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Dict
 
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings, TemporalTimesteps
 from diffsynth_engine.models.basic.unet_helper import (
@@ -10,145 +11,14 @@ from diffsynth_engine.models.basic.unet_helper import (
     PopBlock, 
     UpSampler
 )
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.utils import no_init_weights
+import logging
 
+logger = logging.getLogger(__name__)
 
-class SDXLUNet(nn.Module):
-    def __init__(self, is_kolors=False):
-        super().__init__()
-        self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280)
-        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
-        self.add_time_embedding = nn.Sequential(
-            nn.Linear(5632 if is_kolors else 2816, 1280),
-            nn.SiLU(),
-            nn.Linear(1280, 1280)
-        )
-        self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1)
-        self.text_intermediate_proj = nn.Linear(4096, 2048) if is_kolors else None
-
-        self.blocks = nn.ModuleList([
-            # DownBlock2D
-            ResnetBlock(320, 320, 1280),
-            PushBlock(),
-            ResnetBlock(320, 320, 1280),
-            PushBlock(),
-            DownSampler(320),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PushBlock(),
-            DownSampler(640),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            PushBlock(),
-            # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            ResnetBlock(1280, 1280, 1280),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            PopBlock(),
-            ResnetBlock(1920, 1280, 1280),
-            AttentionBlock(20, 64, 1280, 10, 2048),
-            UpSampler(1280),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(1920, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PopBlock(),
-            ResnetBlock(1280, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            PopBlock(),
-            ResnetBlock(960, 640, 1280),
-            AttentionBlock(10, 64, 640, 2, 2048),
-            UpSampler(640),
-            # UpBlock2D
-            PopBlock(),
-            ResnetBlock(960, 320, 1280),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280)
-        ])
-
-        self.conv_norm_out = nn.GroupNorm(num_channels=320, num_groups=32, eps=1e-5)
-        self.conv_act = nn.SiLU()
-        self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1)
-
-        self.is_kolors = is_kolors
-
-    def forward(
-            self,
-            sample, timestep, encoder_hidden_states, add_time_id, add_text_embeds,
-            tiled=False, tile_size=64, tile_stride=8,
-            use_gradient_checkpointing=False,
-            **kwargs
-    ):
-        # 1. time embedding
-        t_emb = self.time_embedding(timestep, dtype=sample.dtype)
-        ## add embedding
-        time_embeds = self.add_time_proj(add_time_id)
-        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
-        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
-        add_embeds = add_embeds.to(sample.dtype)
-        add_embeds = self.add_time_embedding(add_embeds)
-
-        time_emb = t_emb + add_embeds
-
-        # 2. pre-process
-        height, width = sample.shape[2], sample.shape[3]
-        hidden_states = self.conv_in(sample)
-        text_emb = encoder_hidden_states if self.text_intermediate_proj is None else self.text_intermediate_proj(encoder_hidden_states)
-        res_stack = [hidden_states]
-
-        # 3. blocks
-        def create_custom_forward(module):
-            def custom_forward(*inputs):
-                return module(*inputs)
-            return custom_forward
-        for i, block in enumerate(self.blocks):
-            if self.training and use_gradient_checkpointing and not (isinstance(block, PushBlock) or isinstance(block, PopBlock)):
-                hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states, time_emb, text_emb, res_stack,
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states, time_emb, text_emb, res_stack = block(
-                    hidden_states, time_emb, text_emb, res_stack,
-                    tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
-                )
-
-        # 4. output
-        hidden_states = self.conv_norm_out(hidden_states)
-        hidden_states = self.conv_act(hidden_states)
-        hidden_states = self.conv_out(hidden_states)
-
-        return hidden_states
-
-    @staticmethod
-    def state_dict_converter():
-        return SDXLUNetStateDictConverter()
-
-
-class SDXLUNetStateDictConverter:
-    def __init__(self):
-        pass
-
-    def from_diffusers(self, state_dict):
+class SDXLUNetStateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict):
         # architecture
         block_types = [
             'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock', 'DownSampler', 'PushBlock',
@@ -174,6 +44,8 @@ class SDXLUNetStateDictConverter:
             elif names[0] in ["time_embedding", "add_embedding"]:
                 if names[0] == "add_embedding":
                     names[0] = "add_time_embedding"
+                else:
+                    names[0] = "time_embedding.timestep_embedder"                    
                 names[1] = {"linear_1": "0", "linear_2": "2"}[names[1]]
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
@@ -209,7 +81,7 @@ class SDXLUNetStateDictConverter:
         else:
             return state_dict_
 
-    def from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict):
         rename_dict = {
             "model.diffusion_model.input_blocks.0.0.bias": "conv_in.bias",
             "model.diffusion_model.input_blocks.0.0.weight": "conv_in.weight",
@@ -1887,10 +1759,10 @@ class SDXLUNetStateDictConverter:
             "model.diffusion_model.output_blocks.8.0.out_layers.3.weight": "blocks.48.conv2.weight",
             "model.diffusion_model.output_blocks.8.0.skip_connection.bias": "blocks.48.conv_shortcut.bias",
             "model.diffusion_model.output_blocks.8.0.skip_connection.weight": "blocks.48.conv_shortcut.weight",
-            "model.diffusion_model.time_embed.0.bias": "time_embedding.0.bias",
-            "model.diffusion_model.time_embed.0.weight": "time_embedding.0.weight",
-            "model.diffusion_model.time_embed.2.bias": "time_embedding.2.bias",
-            "model.diffusion_model.time_embed.2.weight": "time_embedding.2.weight",
+            "model.diffusion_model.time_embed.0.bias": "time_embedding.timestep_embedder.0.bias",
+            "model.diffusion_model.time_embed.0.weight": "time_embedding.timestep_embedder.0.weight",
+            "model.diffusion_model.time_embed.2.bias": "time_embedding.timestep_embedder.2.bias",
+            "model.diffusion_model.time_embed.2.weight": "time_embedding.timestep_embedder.2.weight",
         }
         state_dict_ = {}
         for name in state_dict:
@@ -1903,3 +1775,169 @@ class SDXLUNetStateDictConverter:
             return state_dict_, {"is_kolors": True}
         else:
             return state_dict_
+
+    def convert(self, state_dict):
+        if "model.diffusion_model.input_blocks.0.0.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")            
+        elif "down_blocks.0.resnets.0.conv1.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")
+        else:
+            logger.info("user diffsynth format state dict")
+        return state_dict
+        
+        
+
+class SDXLUNet(PreTrainedModel):
+    converter = SDXLUNetStateDictConverter()
+    
+    def __init__(self, 
+        is_kolors:bool=False, 
+        device:str="cuda:0", 
+        dtype:torch.dtype=torch.float16
+    ):
+        super().__init__()
+        self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
+        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
+        self.add_time_embedding = nn.Sequential(
+            nn.Linear(5632 if is_kolors else 2816, 1280, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(1280, 1280, device=device, dtype=dtype)
+        )
+        self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
+        self.text_intermediate_proj = nn.Linear(4096, 2048, device=device, dtype=dtype) if is_kolors else None
+
+        self.blocks = nn.ModuleList([
+            # DownBlock2D
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+            PushBlock(),
+            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+            PushBlock(),
+            DownSampler(320, device=device, dtype=dtype),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            DownSampler(640, device=device, dtype=dtype),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            PushBlock(),
+            # UNetMidBlock2DCrossAttn
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+            # CrossAttnUpBlock2D
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(1920, 1280, 1280, device=device, dtype=dtype),
+            AttentionBlock(20, 64, 1280, 10, 2048, device=device, dtype=dtype),
+            UpSampler(1280, device=device, dtype=dtype),
+            # CrossAttnUpBlock2D
+            PopBlock(),
+            ResnetBlock(1920, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(1280, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(960, 640, 1280, device=device, dtype=dtype),
+            AttentionBlock(10, 64, 640, 2, 2048, device=device, dtype=dtype),
+            UpSampler(640, device=device, dtype=dtype),
+            # UpBlock2D
+            PopBlock(),
+            ResnetBlock(960, 320, 1280, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(640, 320, 1280, device=device, dtype=dtype),
+            PopBlock(),
+            ResnetBlock(640, 320, 1280, device=device, dtype=dtype)
+        ])
+
+        self.conv_norm_out = nn.GroupNorm(num_channels=320, num_groups=32, eps=1e-5, device=device, dtype=dtype)
+        self.conv_act = nn.SiLU()
+        self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1, device=device, dtype=dtype)
+
+        self.is_kolors = is_kolors
+
+    def forward(
+            self,
+            sample, timestep, encoder_hidden_states, add_time_id, add_text_embeds,
+            tiled=False, tile_size=64, tile_stride=8,
+            use_gradient_checkpointing=False,
+            **kwargs
+    ):
+        # 1. time embedding
+        t_emb = self.time_embedding(timestep, dtype=sample.dtype)
+        ## add embedding
+        time_embeds = self.add_time_proj(add_time_id)
+        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
+        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
+        add_embeds = add_embeds.to(sample.dtype)
+        add_embeds = self.add_time_embedding(add_embeds)
+
+        time_emb = t_emb + add_embeds
+
+        # 2. pre-process
+        height, width = sample.shape[2], sample.shape[3]
+        hidden_states = self.conv_in(sample)
+        text_emb = encoder_hidden_states if self.text_intermediate_proj is None else self.text_intermediate_proj(encoder_hidden_states)
+        res_stack = [hidden_states]
+
+        # 3. blocks
+        def create_custom_forward(module):
+            def custom_forward(*inputs):
+                return module(*inputs)
+            return custom_forward
+        for i, block in enumerate(self.blocks):
+            if self.training and use_gradient_checkpointing and not (isinstance(block, PushBlock) or isinstance(block, PopBlock)):
+                hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states, time_emb, text_emb, res_stack,
+                    use_reentrant=False,
+                )
+            else:
+                hidden_states, time_emb, text_emb, res_stack = block(
+                    hidden_states, time_emb, text_emb, res_stack,
+                    tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
+                )
+
+        # 4. output
+        hidden_states = self.conv_norm_out(hidden_states)
+        hidden_states = self.conv_act(hidden_states)
+        hidden_states = self.conv_out(hidden_states)
+
+        return hidden_states
+
+    @classmethod
+    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype, is_kolors:bool=False):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, is_kolors=is_kolors)
+        model.load_state_dict(state_dict)
+        return model
+
+if __name__ == "__main__":
+    import time
+    from safetensors.torch import load_file
+    #model_path = "/home/dizhipeng.dzp/.cache/huggingface/hub/models--stabilityai--stable-diffusion-xl-base-1.0/snapshots/462165984030d82259a11f4367a4eed129e94a7b/unet/diffusion_pytorch_model.fp16.safetensors"
+    model_path = "/home/dizhipeng.dzp/.cache/datahub/RTPDiffusion/sd_xl_base_1.0/20240425120250/sd_xl_base_1.0.safetensors"
+    state_dict = load_file(model_path)
+    start = time.time()
+    model = SDXLUNet.from_state_dict(state_dict, device='cuda:0', dtype=torch.float16)
+    print(f"time: {time.time() - start}")
+    
+
+ 
