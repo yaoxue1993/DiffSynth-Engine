@@ -1,19 +1,21 @@
+import os
 import torch
 import torch.nn as nn
-import logging
-from os import PathLike
 from typing import Dict
 from einops import rearrange
+
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.basic.unet_helper import ResnetBlock, UpSampler, DownSampler
 from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
+
 
 class VAEStateDictConverter(StateDictConverter):
-    def __init__(self, has_encoder:bool=False, has_decoder:bool=False):
+    def __init__(self, has_encoder: bool = False, has_decoder: bool = False):
         self.has_encoder = has_encoder
         self.has_decoder = has_decoder
 
@@ -28,7 +30,7 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.decoder.mid.attn_1.k.weight": "decoder.blocks.1.transformer_blocks.0.to_k.weight",
             "first_stage_model.decoder.mid.attn_1.norm.bias": "decoder.blocks.1.norm.bias",
             "first_stage_model.decoder.mid.attn_1.norm.weight": "decoder.blocks.1.norm.weight",
-            "first_stage_model.decoder.mid.attn_1.proj_out.bias": "decoder.blocks.1.transformer_blocks.0.to_out.bias",    
+            "first_stage_model.decoder.mid.attn_1.proj_out.bias": "decoder.blocks.1.transformer_blocks.0.to_out.bias",
             "first_stage_model.decoder.mid.attn_1.proj_out.weight": "decoder.blocks.1.transformer_blocks.0.to_out.weight",
             "first_stage_model.decoder.mid.attn_1.q.bias": "decoder.blocks.1.transformer_blocks.0.to_q.bias",
             "first_stage_model.decoder.mid.attn_1.q.weight": "decoder.blocks.1.transformer_blocks.0.to_q.weight",
@@ -57,7 +59,7 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.decoder.up.0.block.0.conv2.bias": "decoder.blocks.15.conv2.bias",
             "first_stage_model.decoder.up.0.block.0.conv2.weight": "decoder.blocks.15.conv2.weight",
             "first_stage_model.decoder.up.0.block.0.nin_shortcut.bias": "decoder.blocks.15.conv_shortcut.bias",
-            "first_stage_model.decoder.up.0.block.0.nin_shortcut.weight": "decoder.blocks.15.conv_shortcut.weight",       
+            "first_stage_model.decoder.up.0.block.0.nin_shortcut.weight": "decoder.blocks.15.conv_shortcut.weight",
             "first_stage_model.decoder.up.0.block.0.norm1.bias": "decoder.blocks.15.norm1.bias",
             "first_stage_model.decoder.up.0.block.0.norm1.weight": "decoder.blocks.15.norm1.weight",
             "first_stage_model.decoder.up.0.block.0.norm2.bias": "decoder.blocks.15.norm2.bias",
@@ -83,7 +85,7 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.decoder.up.1.block.0.conv2.bias": "decoder.blocks.11.conv2.bias",
             "first_stage_model.decoder.up.1.block.0.conv2.weight": "decoder.blocks.11.conv2.weight",
             "first_stage_model.decoder.up.1.block.0.nin_shortcut.bias": "decoder.blocks.11.conv_shortcut.bias",
-            "first_stage_model.decoder.up.1.block.0.nin_shortcut.weight": "decoder.blocks.11.conv_shortcut.weight",       
+            "first_stage_model.decoder.up.1.block.0.nin_shortcut.weight": "decoder.blocks.11.conv_shortcut.weight",
             "first_stage_model.decoder.up.1.block.0.norm1.bias": "decoder.blocks.11.norm1.bias",
             "first_stage_model.decoder.up.1.block.0.norm1.weight": "decoder.blocks.11.norm1.weight",
             "first_stage_model.decoder.up.1.block.0.norm2.bias": "decoder.blocks.11.norm2.bias",
@@ -159,7 +161,7 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.decoder.up.3.upsample.conv.bias": "decoder.blocks.6.conv.bias",
             "first_stage_model.decoder.up.3.upsample.conv.weight": "decoder.blocks.6.conv.weight",
             "first_stage_model.post_quant_conv.bias": "decoder.post_quant_conv.bias",
-            "first_stage_model.post_quant_conv.weight": "decoder.post_quant_conv.weight", 
+            "first_stage_model.post_quant_conv.weight": "decoder.post_quant_conv.weight",
             # encoder
             "first_stage_model.encoder.conv_in.bias": "encoder.conv_in.bias",
             "first_stage_model.encoder.conv_in.weight": "encoder.conv_in.weight",
@@ -243,8 +245,8 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.encoder.mid.attn_1.k.weight": "encoder.blocks.12.transformer_blocks.0.to_k.weight",
             "first_stage_model.encoder.mid.attn_1.norm.bias": "encoder.blocks.12.norm.bias",
             "first_stage_model.encoder.mid.attn_1.norm.weight": "encoder.blocks.12.norm.weight",
-            "first_stage_model.encoder.mid.attn_1.proj_out.bias": "encoder.blocks.12.transformer_blocks.0.to_out.bias",       
-            "first_stage_model.encoder.mid.attn_1.proj_out.weight": "encoder.blocks.12.transformer_blocks.0.to_out.weight",   
+            "first_stage_model.encoder.mid.attn_1.proj_out.bias": "encoder.blocks.12.transformer_blocks.0.to_out.bias",
+            "first_stage_model.encoder.mid.attn_1.proj_out.weight": "encoder.blocks.12.transformer_blocks.0.to_out.weight",
             "first_stage_model.encoder.mid.attn_1.q.bias": "encoder.blocks.12.transformer_blocks.0.to_q.bias",
             "first_stage_model.encoder.mid.attn_1.q.weight": "encoder.blocks.12.transformer_blocks.0.to_q.weight",
             "first_stage_model.encoder.mid.attn_1.v.bias": "encoder.blocks.12.transformer_blocks.0.to_v.bias",
@@ -268,16 +270,16 @@ class VAEStateDictConverter(StateDictConverter):
             "first_stage_model.encoder.norm_out.bias": "encoder.conv_norm_out.bias",
             "first_stage_model.encoder.norm_out.weight": "encoder.conv_norm_out.weight",
             "first_stage_model.quant_conv.bias": "encoder.quant_conv.bias",
-            "first_stage_model.quant_conv.weight": "encoder.quant_conv.weight"                    
+            "first_stage_model.quant_conv.weight": "encoder.quant_conv.weight"
         }
         new_state_dict = {}
         for key, param in state_dict.items():
             if key not in rename_dict:
                 raise ValueError(f"Key {key} not found in rename_dict")
             new_key = rename_dict[key]
-            if "transformer_blocks" in new_key:            
+            if "transformer_blocks" in new_key:
                 param = param.squeeze()
-            new_state_dict[new_key] = param                
+            new_state_dict[new_key] = param
         return new_state_dict
 
     def _filter(self, state_dict: Dict[str, torch.Tensor]):
@@ -294,21 +296,22 @@ class VAEStateDictConverter(StateDictConverter):
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         assert self.has_decoder or self.has_encoder, "Either decoder or encoder must be present"
         if "first_stage_model.decoder.conv_in.weight" in state_dict or \
-            "first_stage_model.encoder.conv_in.weight" in state_dict :
+                "first_stage_model.encoder.conv_in.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
         else:
             logger.info("use diffsynth format state dict")
-        return self._filter(state_dict)        
-
+        return self._filter(state_dict)
 
 
 class VAEAttentionBlock(nn.Module):
-    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, norm_num_groups=32, eps=1e-5, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, norm_num_groups=32, eps=1e-5,
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         inner_dim = num_attention_heads * attention_head_dim
 
-        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True, device=device, dtype=dtype)
+        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True,
+                                 device=device, dtype=dtype)
 
         self.transformer_blocks = nn.ModuleList([
             Attention(
@@ -344,20 +347,21 @@ class VAEAttentionBlock(nn.Module):
 class VAEDecoder(PreTrainedModel):
     converter = VAEStateDictConverter(has_decoder=True)
 
-    def __init__(self, 
-        latent_channels:int=4,
-        scaling_factor:float=0.18215,
-        shift_factor:float=0,
-        use_post_quant_conv:bool=True,
-        device:str='cuda:0',
-        dtype:torch.dtype=torch.float16
-    ):
+    def __init__(self,
+                 latent_channels: int = 4,
+                 scaling_factor: float = 0.18215,
+                 shift_factor: float = 0,
+                 use_post_quant_conv: bool = True,
+                 device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16
+                 ):
         super().__init__()
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_post_quant_conv = use_post_quant_conv
         if use_post_quant_conv:
-            self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, kernel_size=1, device=device, dtype=dtype)
+            self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, kernel_size=1,
+                                             device=device, dtype=dtype)
         self.conv_in = nn.Conv2d(latent_channels, 512, kernel_size=3, padding=1, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList([
@@ -429,36 +433,52 @@ class VAEDecoder(PreTrainedModel):
 
         return hidden_states
 
-
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], **kwargs):
-        model = cls(**kwargs)
+    def from_state_dict(cls,
+                        state_dict: Dict[str, torch.Tensor],
+                        latent_channels: int = 4,
+                        scaling_factor: float = 0.18215,
+                        shift_factor: float = 0,
+                        use_post_quant_conv: bool = True,
+                        device: str = 'cuda:0',
+                        dtype: torch.dtype = torch.float16
+                        ):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(
+                cls,
+                latent_channels=latent_channels,
+                scaling_factor=scaling_factor,
+                shift_factor=shift_factor,
+                use_post_quant_conv=use_post_quant_conv,
+                device=device,
+                dtype=dtype
+            )
         model.load_state_dict(state_dict)
         return model
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: str | PathLike, **kwargs):
+    def from_pretrained(cls, pretrained_model_path: str | os.PathLike, **kwargs):
         raise NotImplementedError()
-
 
 
 class VAEEncoder(PreTrainedModel):
     converter = VAEStateDictConverter(has_encoder=True)
 
-    def __init__(self, 
-        latent_channels:int=4,
-        scaling_factor:float=0.18215,
-        shift_factor:float=0,
-        use_quant_conv:bool=True,
-        device:str='cuda:0',
-        dtype:torch.dtype=torch.float16
-    ):
+    def __init__(self,
+                 latent_channels: int = 4,
+                 scaling_factor: float = 0.18215,
+                 shift_factor: float = 0,
+                 use_quant_conv: bool = True,
+                 device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16
+                 ):
         super().__init__()
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_quant_conv = use_quant_conv
         if use_quant_conv:
-            self.quant_conv = nn.Conv2d(2 * latent_channels, 2 * latent_channels, kernel_size=1, device=device, dtype=dtype)
+            self.quant_conv = nn.Conv2d(2 * latent_channels, 2 * latent_channels, kernel_size=1,
+                                        device=device, dtype=dtype)
         self.conv_in = nn.Conv2d(3, 128, kernel_size=3, padding=1, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList([
@@ -531,9 +551,8 @@ class VAEEncoder(PreTrainedModel):
         hidden_states = []
 
         for i in range(0, sample.shape[2], batch_size):
-
             j = min(i + batch_size, sample.shape[2])
-            sample_batch = rearrange(sample[:,:,i:j], "B C T H W -> (B T) C H W")
+            sample_batch = rearrange(sample[:, :, i:j], "B C T H W -> (B T) C H W")
 
             hidden_states_batch = self(sample_batch)
             hidden_states_batch = rearrange(hidden_states_batch, "(B T) C H W -> B C T H W", B=B)
@@ -542,19 +561,19 @@ class VAEEncoder(PreTrainedModel):
 
         hidden_states = torch.concat(hidden_states, dim=2)
         return hidden_states
-    
 
     @classmethod
-    def from_state_dict(cls, 
-        state_dict: Dict[str, torch.Tensor],
-        latent_channels:int=4,
-        scaling_factor:float=0.18215,
-        shift_factor:float=0,
-        use_quant_conv:bool=True,
-        device:str='cuda:0',
-        dtype:torch.dtype=torch.float16
-    ):
-        model = torch.nn.utils.skip_init(cls, 
+    def from_state_dict(cls,
+                        state_dict: Dict[str, torch.Tensor],
+                        latent_channels: int = 4,
+                        scaling_factor: float = 0.18215,
+                        shift_factor: float = 0,
+                        use_quant_conv: bool = True,
+                        device: str = 'cuda:0',
+                        dtype: torch.dtype = torch.float16
+                        ):
+        model = torch.nn.utils.skip_init(
+            cls,
             latent_channels=latent_channels,
             scaling_factor=scaling_factor,
             shift_factor=shift_factor,
@@ -566,46 +585,49 @@ class VAEEncoder(PreTrainedModel):
         return model
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: str | PathLike, **kwargs):
+    def from_pretrained(cls, pretrained_model_path: str | os.PathLike, **kwargs):
         raise NotImplementedError()
-        
+
 
 class VAE(PreTrainedModel):
     converter = VAEStateDictConverter(has_encoder=True, has_decoder=True)
-    
+
     def __init__(self,
-        latent_channels:int=4,
-        scaling_factor:float=0.18215,
-        shift_factor:float=0,
-        use_quant_conv:bool=True,
-        use_post_quant_conv:bool=True,
-        device:str='cuda:0',
-        dtype:torch.dtype=torch.float16
-    ):
+                 latent_channels: int = 4,
+                 scaling_factor: float = 0.18215,
+                 shift_factor: float = 0,
+                 use_quant_conv: bool = True,
+                 use_post_quant_conv: bool = True,
+                 device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16
+                 ):
         super().__init__()
-        self.encoder = VAEEncoder(latent_channels=latent_channels, scaling_factor=scaling_factor, shift_factor=shift_factor, use_quant_conv=use_quant_conv, device=device, dtype=dtype)
-        self.decoder = VAEDecoder(latent_channels=latent_channels, scaling_factor=scaling_factor, shift_factor=shift_factor, use_post_quant_conv=use_post_quant_conv, device=device, dtype=dtype)
+        self.encoder = VAEEncoder(latent_channels=latent_channels, scaling_factor=scaling_factor,
+                                  shift_factor=shift_factor, use_quant_conv=use_quant_conv, device=device, dtype=dtype)
+        self.decoder = VAEDecoder(latent_channels=latent_channels, scaling_factor=scaling_factor,
+                                  shift_factor=shift_factor, use_post_quant_conv=use_post_quant_conv,
+                                  device=device, dtype=dtype)
 
     def encode(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         return self.encoder(sample, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, **kwargs)
 
     def decode(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         return self.decoder(sample, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, **kwargs)
-    
+
     @classmethod
-    def from_state_dict(cls, 
-        state_dict: Dict[str, torch.Tensor],
-        latent_channels:int=4,
-        scaling_factor:float=0.18215,
-        shift_factor:float=0,
-        use_quant_conv:bool=True,
-        use_post_quant_conv:bool=True,
-        device:str='cuda:0',
-        dtype:torch.dtype=torch.float16
-    ):
+    def from_state_dict(cls,
+                        state_dict: Dict[str, torch.Tensor],
+                        latent_channels: int = 4,
+                        scaling_factor: float = 0.18215,
+                        shift_factor: float = 0,
+                        use_quant_conv: bool = True,
+                        use_post_quant_conv: bool = True,
+                        device: str = 'cuda:0',
+                        dtype: torch.dtype = torch.float16
+                        ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
-                cls, 
+                cls,
                 latent_channels=latent_channels,
                 scaling_factor=scaling_factor,
                 shift_factor=shift_factor,
@@ -615,4 +637,4 @@ class VAE(PreTrainedModel):
                 dtype=dtype
             )
         model.load_state_dict(state_dict)
-        return model    
+        return model

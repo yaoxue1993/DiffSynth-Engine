@@ -4,29 +4,33 @@ from typing import Dict
 
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings, TemporalTimesteps
 from diffsynth_engine.models.basic.unet_helper import (
-    ResnetBlock, 
-    AttentionBlock, 
-    PushBlock, 
-    DownSampler, 
-    PopBlock, 
+    ResnetBlock,
+    AttentionBlock,
+    PushBlock,
+    DownSampler,
+    PopBlock,
     UpSampler
 )
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
-import logging
+from diffsynth_engine.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
+
 
 class SDXLUNetStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict):
         # architecture
         block_types = [
             'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
+            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
+            'PushBlock',
             'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock',
             'ResnetBlock', 'AttentionBlock', 'ResnetBlock',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
+            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
+            'ResnetBlock', 'AttentionBlock', 'UpSampler',
+            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
+            'ResnetBlock', 'AttentionBlock', 'UpSampler',
             'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock'
         ]
 
@@ -45,12 +49,13 @@ class SDXLUNetStateDictConverter(StateDictConverter):
                 if names[0] == "add_embedding":
                     names[0] = "add_time_embedding"
                 else:
-                    names[0] = "time_embedding.timestep_embedder"                    
+                    names[0] = "time_embedding.timestep_embedder"
                 names[1] = {"linear_1": "0", "linear_2": "2"}[names[1]]
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
                     names.insert(1, "0")
-                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler", "upsamplers": "UpSampler"}[names[2]]
+                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler",
+                              "upsamplers": "UpSampler"}[names[2]]
                 block_type_with_id = ".".join(names[:4])
                 if block_type_with_id != last_block_type_with_id[block_type]:
                     block_id[block_type] += 1
@@ -61,9 +66,9 @@ class SDXLUNetStateDictConverter(StateDictConverter):
                 names = ["blocks", str(block_id[block_type])] + names[4:]
                 if "ff" in names:
                     ff_index = names.index("ff")
-                    component = ".".join(names[ff_index:ff_index+3])
+                    component = ".".join(names[ff_index:ff_index + 3])
                     component = {"ff.net.0": "act_fn", "ff.net.2": "ff"}[component]
-                    names = names[:ff_index] + [component] + names[ff_index+3:]
+                    names = names[:ff_index] + [component] + names[ff_index + 3:]
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
@@ -1779,27 +1784,27 @@ class SDXLUNetStateDictConverter(StateDictConverter):
     def convert(self, state_dict):
         if "model.diffusion_model.input_blocks.0.0.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
-            logger.info("use civitai format state dict")            
+            logger.info("use civitai format state dict")
         elif "down_blocks.0.resnets.0.conv1.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
             logger.info("use diffusers format state dict")
         else:
             logger.info("user diffsynth format state dict")
         return state_dict
-        
-        
+
 
 class SDXLUNet(PreTrainedModel):
     converter = SDXLUNetStateDictConverter()
-    
-    def __init__(self, 
-        is_kolors:bool=False, 
-        device:str="cuda:0", 
-        dtype:torch.dtype=torch.float16
-    ):
+
+    def __init__(self,
+                 is_kolors: bool = False,
+                 device: str = "cuda:0",
+                 dtype: torch.dtype = torch.float16
+                 ):
         super().__init__()
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
-        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype)
+        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
+                                               device=device, dtype=dtype)
         self.add_time_embedding = nn.Sequential(
             nn.Linear(5632 if is_kolors else 2816, 1280, device=device, dtype=dtype),
             nn.SiLU(),
@@ -1894,16 +1899,20 @@ class SDXLUNet(PreTrainedModel):
         # 2. pre-process
         height, width = sample.shape[2], sample.shape[3]
         hidden_states = self.conv_in(sample)
-        text_emb = encoder_hidden_states if self.text_intermediate_proj is None else self.text_intermediate_proj(encoder_hidden_states)
+        text_emb = encoder_hidden_states if self.text_intermediate_proj is None \
+            else self.text_intermediate_proj(encoder_hidden_states)
         res_stack = [hidden_states]
 
         # 3. blocks
         def create_custom_forward(module):
             def custom_forward(*inputs):
                 return module(*inputs)
+
             return custom_forward
+
         for i, block in enumerate(self.blocks):
-            if self.training and use_gradient_checkpointing and not (isinstance(block, PushBlock) or isinstance(block, PopBlock)):
+            if self.training and use_gradient_checkpointing and not (
+                    isinstance(block, PushBlock) or isinstance(block, PopBlock)):
                 hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states, time_emb, text_emb, res_stack,
@@ -1923,10 +1932,10 @@ class SDXLUNet(PreTrainedModel):
         return hidden_states
 
     @classmethod
-    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype, is_kolors:bool=False):
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype,
+                        is_kolors: bool = False):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, is_kolors=is_kolors)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
- 

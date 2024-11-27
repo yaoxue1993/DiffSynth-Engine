@@ -15,7 +15,8 @@ def low_version_attention(query, key, value, attn_bias=None):
 
 class Attention(nn.Module):
 
-    def __init__(self, q_dim, num_heads, head_dim, kv_dim=None, bias_q=False, bias_kv=False, bias_out=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, q_dim, num_heads, head_dim, kv_dim=None, bias_q=False, bias_kv=False, bias_out=False,
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         dim_inner = head_dim * num_heads
         kv_dim = kv_dim if kv_dim is not None else q_dim
@@ -35,7 +36,8 @@ class Attention(nn.Module):
         hidden_states = hidden_states + scale * ip_hidden_states
         return hidden_states
 
-    def torch_forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None, qkv_preprocessor=None):
+    def torch_forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None,
+                      qkv_preprocessor=None):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
 
@@ -86,5 +88,7 @@ class Attention(nn.Module):
 
         return hidden_states
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None, qkv_preprocessor=None):
-        return self.torch_forward(hidden_states, encoder_hidden_states=encoder_hidden_states, attn_mask=attn_mask, ipadapter_kwargs=ipadapter_kwargs, qkv_preprocessor=qkv_preprocessor)
+    def forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None,
+                qkv_preprocessor=None):
+        return self.torch_forward(hidden_states, encoder_hidden_states=encoder_hidden_states, attn_mask=attn_mask,
+                                  ipadapter_kwargs=ipadapter_kwargs, qkv_preprocessor=qkv_preprocessor)

@@ -1,7 +1,7 @@
 import torch
 
-from diffsynth_engine.models.sd_text_encoder import SDTextEncoder
-from diffsynth_engine.models.t5 import T5EncoderModel
+from diffsynth_engine.models.sd.sd_text_encoder import SDTextEncoder
+from diffsynth_engine.models.components.t5 import T5EncoderModel
 from diffsynth_engine.configs import T5Config
 
 
@@ -75,7 +75,7 @@ class FluxTextEncoder1StateDictConverter:
                 name_ = ".".join(["encoders", layer_id, attn_rename_dict[layer_type], tail])
                 state_dict_[name_] = param
         return state_dict_
-    
+
     def from_civitai(self, state_dict):
         return self.from_diffusers(state_dict)
 

@@ -7,12 +7,11 @@ from typing import Tuple, Optional
 from diffsynth_engine.configs import T5Config
 from diffsynth_engine.utils import logging
 
-
 logger = logging.get_logger(__name__)
 
 
 class T5LayerNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, hidden_size, eps=1e-6, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         """
         Construct a layernorm module in the T5 style. No bias and no subtraction of mean.
         """
@@ -70,7 +69,7 @@ def get_activation_fn(name):
 
 
 class T5DenseActDense(nn.Module):
-    def __init__(self, config: T5Config, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config: T5Config, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.wi = nn.Linear(config.d_model, config.d_ff, bias=False, device=device, dtype=dtype)
         self.wo = nn.Linear(config.d_ff, config.d_model, bias=False, device=device, dtype=dtype)
@@ -92,7 +91,7 @@ class T5DenseActDense(nn.Module):
 
 
 class T5DenseGatedActDense(nn.Module):
-    def __init__(self, config: T5Config, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config: T5Config, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.wi_0 = nn.Linear(config.d_model, config.d_ff, bias=False, device=device, dtype=dtype)
         self.wi_1 = nn.Linear(config.d_model, config.d_ff, bias=False, device=device, dtype=dtype)
@@ -121,7 +120,7 @@ class T5DenseGatedActDense(nn.Module):
 
 
 class T5LayerFF(nn.Module):
-    def __init__(self, config: T5Config, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config: T5Config, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         if config.is_gated_act:
             self.DenseReluDense = T5DenseGatedActDense(config, device=device, dtype=dtype)
@@ -144,8 +143,8 @@ class T5Attention(nn.Module):
             config: T5Config,
             has_relative_attention_bias=False,
             layer_idx: Optional[int] = None,
-            device:str='cuda:0',
-            dtype:torch.dtype=torch.float16,
+            device: str = 'cuda:0',
+            dtype: torch.dtype = torch.float16,
     ):
         super().__init__()
         self.is_decoder = config.is_decoder
@@ -172,7 +171,8 @@ class T5Attention(nn.Module):
         self.o = nn.Linear(self.inner_dim, self.d_model, bias=False, device=device, dtype=dtype)
 
         if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads, device=device, dtype=dtype)
+            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads,
+                                                        device=device, dtype=dtype)
         self.pruned_heads = set()
         self.gradient_checkpointing = False
 
@@ -353,10 +353,12 @@ class T5Attention(nn.Module):
 
 
 class T5LayerSelfAttention(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None,
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.SelfAttention = T5Attention(
-            config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, device=device, dtype=dtype
+            config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx,
+            device=device, dtype=dtype
         )
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon, device=device, dtype=dtype)
         self.dropout = nn.Dropout(config.dropout_rate, device=device, dtype=dtype)
@@ -389,9 +391,11 @@ class T5LayerSelfAttention(nn.Module):
 
 
 class T5LayerCrossAttention(nn.Module):
-    def __init__(self, config, layer_idx: Optional[int] = None, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config, layer_idx: Optional[int] = None, device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.EncDecAttention = T5Attention(config, has_relative_attention_bias=False, layer_idx=layer_idx, device=device, dtype=dtype)
+        self.EncDecAttention = T5Attention(config, has_relative_attention_bias=False, layer_idx=layer_idx,
+                                           device=device, dtype=dtype)
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon, device=device, dtype=dtype)
         self.dropout = nn.Dropout(config.dropout_rate, device=device, dtype=dtype)
 
@@ -427,12 +431,14 @@ class T5LayerCrossAttention(nn.Module):
 
 
 class T5Block(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None,
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
         self.layer.append(
-            T5LayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, device=device, dtype=dtype)
+            T5LayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx,
+                                 device=device, dtype=dtype)
         )
         if self.is_decoder:
             self.layer.append(T5LayerCrossAttention(config, layer_idx=layer_idx, device=device, dtype=dtype))
@@ -474,7 +480,7 @@ class T5Block(nn.Module):
                 torch.isinf(hidden_states).any(),
                 torch.finfo(hidden_states.dtype).max - 1000,
                 torch.finfo(hidden_states.dtype).max,
-                )
+            )
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
@@ -498,7 +504,7 @@ class T5Block(nn.Module):
                     torch.isinf(hidden_states).any(),
                     torch.finfo(hidden_states.dtype).max - 1000,
                     torch.finfo(hidden_states.dtype).max,
-                    )
+                )
                 hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
             # Keep cross-attention outputs and relative position weights
@@ -513,7 +519,7 @@ class T5Block(nn.Module):
                 torch.isinf(hidden_states).any(),
                 torch.finfo(hidden_states.dtype).max - 1000,
                 torch.finfo(hidden_states.dtype).max,
-                )
+            )
             hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         outputs = (hidden_states,)
@@ -528,14 +534,15 @@ class T5Block(nn.Module):
 
 class T5EncoderModel(nn.Module):
 
-    def __init__(self, config: T5Config, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, config: T5Config, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.config = config
         assert config.is_decoder == False, "T5EncoderModel should not be used as decoder"
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, device=device, dtype=dtype)
         self.block = nn.ModuleList(
-            [T5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i, device=device, dtype=dtype) for i in range(config.num_layers)]
+            [T5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i, device=device, dtype=dtype)
+             for i in range(config.num_layers)]
         )
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon, device=device, dtype=dtype)
         self.dropout = nn.Dropout(config.dropout_rate, device=device, dtype=dtype)

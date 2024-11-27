@@ -1,34 +1,42 @@
-from typing import Dict
 import torch
 import torch.nn as nn
+from typing import Dict
+
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.basic.unet_helper import (
-    ResnetBlock, 
-    AttentionBlock, 
-    PushBlock, 
-    DownSampler, 
-    PopBlock, 
+    ResnetBlock,
+    AttentionBlock,
+    PushBlock,
+    DownSampler,
+    PopBlock,
     UpSampler
 )
-import logging
+from diffsynth_engine.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
+
 
 class SDUNetStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict):
         # architecture
         block_types = [
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
+            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
+            'PushBlock',
+            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
+            'PushBlock',
+            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
+            'PushBlock',
             'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock',
             'ResnetBlock', 'AttentionBlock', 'ResnetBlock',
             'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock'
+            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
+            'ResnetBlock', 'AttentionBlock', 'UpSampler',
+            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
+            'ResnetBlock', 'AttentionBlock', 'UpSampler',
+            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
+            'ResnetBlock', 'AttentionBlock'
         ]
 
         # Rename each parameter
@@ -49,7 +57,8 @@ class SDUNetStateDictConverter(StateDictConverter):
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
                     names.insert(1, "0")
-                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler", "upsamplers": "UpSampler"}[names[2]]
+                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler",
+                              "upsamplers": "UpSampler"}[names[2]]
                 block_type_with_id = ".".join(names[:4])
                 if block_type_with_id != last_block_type_with_id[block_type]:
                     block_id[block_type] += 1
@@ -60,13 +69,13 @@ class SDUNetStateDictConverter(StateDictConverter):
                 names = ["blocks", str(block_id[block_type])] + names[4:]
                 if "ff" in names:
                     ff_index = names.index("ff")
-                    component = ".".join(names[ff_index:ff_index+3])
+                    component = ".".join(names[ff_index:ff_index + 3])
                     component = {"ff.net.0": "act_fn", "ff.net.2": "ff"}[component]
-                    names = names[:ff_index] + [component] + names[ff_index+3:]
+                    names = names[:ff_index] + [component] + names[ff_index + 3:]
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
-                raise ValueError(f"Unknown parameters: {name}")            
+                raise ValueError(f"Unknown parameters: {name}")
             rename_dict[name] = ".".join(names)
 
         # Convert state_dict
@@ -783,14 +792,14 @@ class SDUNetStateDictConverter(StateDictConverter):
             state_dict = self._from_diffusers(state_dict)
             logger.info("use diffsynth format state dict")
         else:
-            logger.info("user diffsynth format state dict")            
+            logger.info("user diffsynth format state dict")
         return state_dict
-    
+
 
 class SDUNet(PreTrainedModel):
     converter = SDUNetStateDictConverter()
 
-    def __init__(self, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
         self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
@@ -897,9 +906,9 @@ class SDUNet(PreTrainedModel):
         hidden_states = self.conv_out(hidden_states)
 
         return hidden_states
-    
+
     @classmethod
-    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype):
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
         model.load_state_dict(state_dict, assign=True)

@@ -1,18 +1,19 @@
-import logging
-from typing import Dict
 import torch
 import torch.nn as nn
+from typing import Dict
 from einops import rearrange
 
 from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
+
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim, single=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, dim, single=False, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.single = single
         self.linear = nn.Linear(dim, dim * (2 if single else 6), device=device, dtype=dtype)
@@ -28,7 +29,8 @@ class AdaLayerNorm(nn.Module):
             shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.unsqueeze(1).chunk(6, dim=2)
             x = self.norm(x) * (1 + scale_msa) + shift_msa
             return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
-        
+
+
 class RoPEEmbedding(nn.Module):
     def __init__(self, dim, theta, axes_dim):
         super().__init__()
@@ -40,7 +42,7 @@ class RoPEEmbedding(nn.Module):
         assert dim % 2 == 0, "The dimension must be even."
 
         scale = torch.arange(0, dim, 2, dtype=torch.float64, device=pos.device) / dim
-        omega = 1.0 / (theta**scale)
+        omega = 1.0 / (theta ** scale)
 
         batch_size, seq_length = pos.shape
         out = torch.einsum("...n,d->...nd", pos, omega)
@@ -51,7 +53,6 @@ class RoPEEmbedding(nn.Module):
         out = stacked_out.view(batch_size, -1, dim // 2, 2, 2)
         return out.float()
 
-
     def forward(self, ids):
         n_axes = ids.shape[-1]
         emb = torch.cat([self.rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)], dim=-3)
@@ -59,7 +60,7 @@ class RoPEEmbedding(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim, eps, device:str, dtype:torch.dtype):
+    def __init__(self, dim, eps, device: str, dtype: torch.dtype):
         super().__init__()
         self.weight = nn.Parameter(torch.ones((dim,), device=device, dtype=dtype))
         self.eps = eps
@@ -73,7 +74,8 @@ class RMSNorm(nn.Module):
 
 
 class FluxJointAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -91,14 +93,12 @@ class FluxJointAttention(nn.Module):
         if not only_out_a:
             self.b_to_out = nn.Linear(dim_b, dim_b)
 
-
     def apply_rope(self, xq, xk, freqs_cis):
         xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
         xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
         xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
         xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
         return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
-
 
     def forward(self, hidden_states_a, hidden_states_b, image_rotary_emb):
         batch_size = hidden_states_a.shape[0]
@@ -124,7 +124,8 @@ class FluxJointAttention(nn.Module):
         hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
-        hidden_states_b, hidden_states_a = hidden_states[:, :hidden_states_b.shape[1]], hidden_states[:, hidden_states_b.shape[1]:]
+        hidden_states_b, hidden_states_a = (hidden_states[:, :hidden_states_b.shape[1]],
+                                            hidden_states[:, hidden_states_b.shape[1]:])
         hidden_states_a = self.a_to_out(hidden_states_a)
         if self.only_out_a:
             return hidden_states_a
@@ -134,27 +135,27 @@ class FluxJointAttention(nn.Module):
 
 
 class FluxJointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
-        self.attn = FluxJointAttention(dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype)
+        self.attn = FluxJointAttention(dim, dim, num_attention_heads, dim // num_attention_heads,
+                                       device=device, dtype=dtype)
 
         self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim*4),
+            nn.Linear(dim, dim * 4),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim*4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
 
         self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
-            nn.Linear(dim, dim*4, device=device, dtype=dtype),
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim*4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
-
 
     def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb):
         norm_hidden_states_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.norm1_a(hidden_states_a, emb=temb)
@@ -177,7 +178,7 @@ class FluxJointTransformerBlock(nn.Module):
 
 
 class FluxSingleAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, device:str, dtype:torch.dtype):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, device: str, dtype: torch.dtype):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -187,14 +188,12 @@ class FluxSingleAttention(nn.Module):
         self.norm_q_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
         self.norm_k_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
 
-
     def apply_rope(self, xq, xk, freqs_cis):
         xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
         xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
         xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
         xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
         return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
-
 
     def forward(self, hidden_states, image_rotary_emb):
         batch_size = hidden_states.shape[0]
@@ -213,12 +212,11 @@ class FluxSingleAttention(nn.Module):
 
 
 class AdaLayerNormSingle(nn.Module):
-    def __init__(self, dim, device:str, dtype:torch.dtype):
+    def __init__(self, dim, device: str, dtype: torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
         self.linear = nn.Linear(dim, 3 * dim, bias=True, device=device, dtype=dtype)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
-
 
     def forward(self, x, emb):
         emb = self.linear(self.silu(emb))
@@ -228,7 +226,7 @@ class AdaLayerNormSingle(nn.Module):
 
 
 class FluxSingleTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device:str, dtype:torch.dtype):
+    def __init__(self, dim, num_attention_heads, device: str, dtype: torch.dtype):
         super().__init__()
         self.num_heads = num_attention_heads
         self.head_dim = dim // num_attention_heads
@@ -274,12 +272,12 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states_a = torch.cat([attn_output, mlp_hidden_states], dim=2)
         hidden_states_a = gate.unsqueeze(1) * self.proj_out(hidden_states_a)
         hidden_states_a = residual + hidden_states_a
-        
+
         return hidden_states_a, hidden_states_b
 
 
 class AdaLayerNormContinuous(nn.Module):
-    def __init__(self, dim, device:str, dtype:torch.dtype):
+    def __init__(self, dim, device: str, dtype: torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
         self.linear = nn.Linear(dim, dim * 2, bias=True, device=device, dtype=dtype)
@@ -290,6 +288,7 @@ class AdaLayerNormContinuous(nn.Module):
         scale, shift = torch.chunk(emb, 2, dim=1)
         x = self.norm(x) * (1 + scale)[:, None] + shift[:, None]
         return x
+
 
 class FluxDiTStateDictConverter(StateDictConverter):
     def __init__(self):
@@ -392,7 +391,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
                     state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_k."))
                     state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_v."))
         return state_dict_
-    
+
     def _from_civitai(self, state_dict):
         rename_dict = {
             "time_in.in_layer.bias": "time_embedder.timestep_embedder.0.bias",
@@ -484,22 +483,25 @@ class FluxDiTStateDictConverter(StateDictConverter):
             logger.info("user diffsynth format state dict")
         return state_dict
 
-    
 
 class FluxDiT(PreTrainedModel):
     converter = FluxDiTStateDictConverter()
 
-    def __init__(self, disable_guidance_embedder=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, disable_guidance_embedder=False, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        self.guidance_embedder = None if disable_guidance_embedder else TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        self.pooled_text_embedder = nn.Sequential(nn.Linear(768, 3072, device=device, dtype=dtype), nn.SiLU(), nn.Linear(3072, 3072, device=device, dtype=dtype))
+        self.guidance_embedder = None if disable_guidance_embedder else TimestepEmbeddings(256, 3072,
+                                                                                           device=device, dtype=dtype)
+        self.pooled_text_embedder = nn.Sequential(nn.Linear(768, 3072, device=device, dtype=dtype), nn.SiLU(),
+                                                  nn.Linear(3072, 3072, device=device, dtype=dtype))
         self.context_embedder = nn.Linear(4096, 3072, device=device, dtype=dtype)
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
-        self.blocks = nn.ModuleList([FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)])
-        self.single_blocks = nn.ModuleList([FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)])
+        self.blocks = nn.ModuleList(
+            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)])
+        self.single_blocks = nn.ModuleList(
+            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)])
 
         self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
@@ -509,7 +511,8 @@ class FluxDiT(PreTrainedModel):
         return hidden_states
 
     def unpatchify(self, hidden_states, height, width):
-        hidden_states = rearrange(hidden_states, "B (H W) (C P Q) -> B C (H P) (W Q)", P=2, Q=2, H=height//2, W=width//2)
+        hidden_states = rearrange(hidden_states, "B (H W) (C P Q) -> B C (H P) (W Q)", P=2, Q=2, H=height // 2,
+                                  W=width // 2)
         return hidden_states
 
     def prepare_image_ids(self, latents):
@@ -529,11 +532,11 @@ class FluxDiT(PreTrainedModel):
         return latent_image_ids
 
     def tiled_forward(
-        self,
-        hidden_states,
-        timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids,
-        tile_size=128, tile_stride=64,
-        **kwargs
+            self,
+            hidden_states,
+            timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids,
+            tile_size=128, tile_stride=64,
+            **kwargs
     ):
         # Due to the global positional embedding, we cannot implement layer-wise tiled forward.
         hidden_states = TileWorker().tiled_forward(
@@ -547,12 +550,12 @@ class FluxDiT(PreTrainedModel):
         return hidden_states
 
     def forward(
-        self,
-        hidden_states,
-        timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids, image_ids=None,
-        tiled=False, tile_size=128, tile_stride=64,
-        use_gradient_checkpointing=False,
-        **kwargs
+            self,
+            hidden_states,
+            timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids, image_ids=None,
+            tiled=False, tile_size=128, tile_stride=64,
+            use_gradient_checkpointing=False,
+            **kwargs
     ):
         if tiled:
             return self.tiled_forward(
@@ -561,10 +564,10 @@ class FluxDiT(PreTrainedModel):
                 tile_size=tile_size, tile_stride=tile_stride,
                 **kwargs
             )
-        
+
         if image_ids is None:
             image_ids = self.prepare_image_ids(hidden_states)
-        
+
         conditioning = self.time_embedder(timestep, hidden_states.dtype) + self.pooled_text_embedder(pooled_prompt_emb)
         if self.guidance_embedder is not None:
             guidance = guidance * 1000
@@ -575,12 +578,13 @@ class FluxDiT(PreTrainedModel):
         height, width = hidden_states.shape[-2:]
         hidden_states = self.patchify(hidden_states)
         hidden_states = self.x_embedder(hidden_states)
-        
+
         def create_custom_forward(module):
             def custom_forward(*inputs):
                 return module(*inputs)
+
             return custom_forward
-        
+
         for block in self.blocks:
             if self.training and use_gradient_checkpointing:
                 hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
@@ -608,17 +612,18 @@ class FluxDiT(PreTrainedModel):
         hidden_states = self.unpatchify(hidden_states, height, width)
 
         return hidden_states
-    
+
     @classmethod
     def from_state_dict(
-        cls, 
-        state_dict: Dict[str, torch.Tensor], 
-        device: str, 
-        dtype: torch.dtype,
-        disable_guidance_embedder: bool=False
+            cls,
+            state_dict: Dict[str, torch.Tensor],
+            device: str,
+            dtype: torch.dtype,
+            disable_guidance_embedder: bool = False
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder)
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype,
+                                             disable_guidance_embedder=disable_guidance_embedder)
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

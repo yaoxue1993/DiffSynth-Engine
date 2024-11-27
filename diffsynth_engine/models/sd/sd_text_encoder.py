@@ -1,11 +1,14 @@
 import torch
 import torch.nn as nn
-import logging
 from typing import Dict
+
 from diffsynth_engine.models.components.clip import CLIPEncoderLayer
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
-logger = logging.getLogger(__name__)
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
+
 
 class SDTextEncoderStateDictConverter(StateDictConverter):
     def __init__(self):
@@ -42,7 +45,7 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
                 name_ = ".".join(["encoders", layer_id, attn_rename_dict[layer_type], tail])
                 state_dict_[name_] = param
         return state_dict_
-    
+
     def _from_civitai(self, state_dict):
         rename_dict = {
             "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight": "token_embedding.weight",
@@ -89,7 +92,7 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.k_proj.bias": "encoders.10.attn.to_k.bias",
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.k_proj.weight": "encoders.10.attn.to_k.weight",
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.out_proj.bias": "encoders.10.attn.to_out.bias",
-            "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.out_proj.weight": "encoders.10.attn.to_out.weight",        
+            "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.out_proj.weight": "encoders.10.attn.to_out.weight",
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.q_proj.bias": "encoders.10.attn.to_q.bias",
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.q_proj.weight": "encoders.10.attn.to_q.weight",
             "cond_stage_model.transformer.text_model.encoder.layers.10.self_attn.v_proj.bias": "encoders.10.attn.to_v.bias",
@@ -262,20 +265,25 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
             logger.info("use diffsynth format state dict")
         return state_dict
 
+
 class SDTextEncoder(PreTrainedModel):
     converter = SDTextEncoderStateDictConverter()
 
-    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12, encoder_intermediate_size=3072, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12,
+                 encoder_intermediate_size=3072, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
 
         # token_embedding
         self.token_embedding = nn.Embedding(vocab_size, embed_dim, device=device, dtype=dtype)
 
         # position_embeds (This is a fixed tensor)
-        self.position_embeds = nn.Parameter(torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
+        self.position_embeds = nn.Parameter(
+            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
 
         # encoders
-        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype) for _ in range(num_encoder_layers)])
+        self.encoders = nn.ModuleList(
+            [CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype)
+             for _ in range(num_encoder_layers)])
 
         # attn_mask
         self.attn_mask = self.attention_mask(max_position_embeddings)
@@ -298,20 +306,23 @@ class SDTextEncoder(PreTrainedModel):
                 break
         embeds = self.final_layer_norm(embeds)
         return embeds
-    
+
     @classmethod
     def from_state_dict(
-        cls, 
-        state_dict:Dict[str, torch.Tensor],
-        device:str,
-        dtype:torch.dtype,
-        embed_dim:int=768, 
-        vocab_size:int=49408, 
-        max_position_embeddings:int=77, 
-        num_encoder_layers:int=12, 
-        encoder_intermediate_size:int=3072,
+            cls,
+            state_dict: Dict[str, torch.Tensor],
+            device: str,
+            dtype: torch.dtype,
+            embed_dim: int = 768,
+            vocab_size: int = 49408,
+            max_position_embeddings: int = 77,
+            num_encoder_layers: int = 12,
+            encoder_intermediate_size: int = 3072,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim, vocab_size=vocab_size, max_position_embeddings=max_position_embeddings, num_encoder_layers=num_encoder_layers, encoder_intermediate_size=encoder_intermediate_size)
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim,
+                                             vocab_size=vocab_size, max_position_embeddings=max_position_embeddings,
+                                             num_encoder_layers=num_encoder_layers,
+                                             encoder_intermediate_size=encoder_intermediate_size)
         model.load_state_dict(state_dict)
         return model

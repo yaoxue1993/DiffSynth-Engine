@@ -4,8 +4,7 @@ from contextlib import contextmanager
 
 
 @contextmanager
-def init_weights_on_device(device = torch.device("meta"), include_buffers :bool = False):
-
+def init_weights_on_device(device=torch.device("meta"), include_buffers: bool = False):
     old_register_parameter = nn.Module.register_parameter
     if include_buffers:
         old_register_buffer = nn.Module.register_buffer
@@ -71,8 +70,8 @@ TORCH_INIT_FUNCTIONS = {
     "kaiming_normal": nn.init.kaiming_normal,
 }
 
-
 _init_weights = True
+
 
 @contextmanager
 def no_init_weights():
