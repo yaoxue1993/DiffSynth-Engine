@@ -1,5 +1,7 @@
+from typing import Dict
+import torch
 import torch.nn as nn
-
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.unet_helper import (
     ResnetBlock, 
@@ -9,127 +11,12 @@ from diffsynth_engine.models.basic.unet_helper import (
     PopBlock, 
     UpSampler
 )
+import logging
 
+logger = logging.getLogger(__name__)
 
-class SDUNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280)
-        self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1)
-
-        self.blocks = nn.ModuleList([
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
-            PushBlock(),
-            ResnetBlock(320, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
-            PushBlock(),
-            DownSampler(320),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
-            PushBlock(),
-            DownSampler(640),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            PushBlock(),
-            DownSampler(1280),
-            PushBlock(),
-            # DownBlock2D
-            ResnetBlock(1280, 1280, 1280),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280),
-            PushBlock(),
-            # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            ResnetBlock(1280, 1280, 1280),
-            # UpBlock2D
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            UpSampler(1280),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(1920, 1280, 1280),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
-            UpSampler(1280),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(1920, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(1280, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(960, 640, 1280),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
-            UpSampler(640),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(960, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
-        ])
-
-        self.conv_norm_out = nn.GroupNorm(num_channels=320, num_groups=32, eps=1e-5)
-        self.conv_act = nn.SiLU()
-        self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1)
-
-    def forward(self, sample, timestep, encoder_hidden_states, **kwargs):
-        # 1. time
-        time_emb = self.time_embedding(timestep, dtype=sample.dtype)
-
-        # 2. pre-process
-        hidden_states = self.conv_in(sample)
-        text_emb = encoder_hidden_states
-        res_stack = [hidden_states]
-
-        # 3. blocks
-        for i, block in enumerate(self.blocks):
-            hidden_states, time_emb, text_emb, res_stack = block(hidden_states, time_emb, text_emb, res_stack)
-
-        # 4. output
-        hidden_states = self.conv_norm_out(hidden_states)
-        hidden_states = self.conv_act(hidden_states)
-        hidden_states = self.conv_out(hidden_states)
-
-        return hidden_states
-
-    @staticmethod
-    def state_dict_converter():
-        return SDUNetStateDictConverter()
-
-
-class SDUNetStateDictConverter:
-    def __init__(self):
-        pass
-
-    def from_diffusers(self, state_dict):
+class SDUNetStateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict):
         # architecture
         block_types = [
             'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler', 'PushBlock',
@@ -155,6 +42,8 @@ class SDUNetStateDictConverter:
             elif names[0] in ["time_embedding", "add_embedding"]:
                 if names[0] == "add_embedding":
                     names[0] = "add_time_embedding"
+                else:
+                    names[0] = "time_embedding.timestep_embedder"
                 names[1] = {"linear_1": "0", "linear_2": "2"}[names[1]]
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
@@ -176,7 +65,7 @@ class SDUNetStateDictConverter:
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
-                raise ValueError(f"Unknown parameters: {name}")
+                raise ValueError(f"Unknown parameters: {name}")            
             rename_dict[name] = ".".join(names)
 
         # Convert state_dict
@@ -187,7 +76,7 @@ class SDUNetStateDictConverter:
             state_dict_[rename_dict[name]] = param
         return state_dict_
 
-    def from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict):
         rename_dict = {
             "model.diffusion_model.input_blocks.0.0.bias": "conv_in.bias",
             "model.diffusion_model.input_blocks.0.0.weight": "conv_in.weight",
@@ -871,10 +760,10 @@ class SDUNetStateDictConverter:
             "model.diffusion_model.output_blocks.9.1.transformer_blocks.0.norm2.weight": "blocks.60.transformer_blocks.0.norm2.weight",
             "model.diffusion_model.output_blocks.9.1.transformer_blocks.0.norm3.bias": "blocks.60.transformer_blocks.0.norm3.bias",
             "model.diffusion_model.output_blocks.9.1.transformer_blocks.0.norm3.weight": "blocks.60.transformer_blocks.0.norm3.weight",
-            "model.diffusion_model.time_embed.0.bias": "time_embedding.0.bias",
-            "model.diffusion_model.time_embed.0.weight": "time_embedding.0.weight",
-            "model.diffusion_model.time_embed.2.bias": "time_embedding.2.bias",
-            "model.diffusion_model.time_embed.2.weight": "time_embedding.2.weight",
+            "model.diffusion_model.time_embed.0.bias": "time_embedding.timestep_embedder.0.bias",
+            "model.diffusion_model.time_embed.0.weight": "time_embedding.timestep_embedder.0.weight",
+            "model.diffusion_model.time_embed.2.bias": "time_embedding.timestep_embedder.2.bias",
+            "model.diffusion_model.time_embed.2.weight": "time_embedding.timestep_embedder.2.weight",
         }
         state_dict_ = {}
         for name in state_dict:
@@ -884,3 +773,124 @@ class SDUNetStateDictConverter:
                     param = param.squeeze()
                 state_dict_[rename_dict[name]] = param
         return state_dict_
+
+    def convert(self, state_dict: Dict[str, torch.Tensor]):
+        if "model.diffusion_model.input_blocks.0.0.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")
+        elif "down_blocks.0.attentions.0.norm.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffsynth format state dict")
+        return state_dict
+    
+
+class SDUNet(PreTrainedModel):
+    converter = SDUNetStateDictConverter()
+
+    def __init__(self):
+        super().__init__()
+        self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280)
+        self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1)
+
+        self.blocks = nn.ModuleList([
+            # CrossAttnDownBlock2D
+            ResnetBlock(320, 320, 1280),
+            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
+            PushBlock(),
+            ResnetBlock(320, 320, 1280),
+            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
+            PushBlock(),
+            DownSampler(320),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(320, 640, 1280),
+            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
+            PushBlock(),
+            ResnetBlock(640, 640, 1280),
+            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
+            PushBlock(),
+            DownSampler(640),
+            PushBlock(),
+            # CrossAttnDownBlock2D
+            ResnetBlock(640, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            PushBlock(),
+            ResnetBlock(1280, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            PushBlock(),
+            DownSampler(1280),
+            PushBlock(),
+            # DownBlock2D
+            ResnetBlock(1280, 1280, 1280),
+            PushBlock(),
+            ResnetBlock(1280, 1280, 1280),
+            PushBlock(),
+            # UNetMidBlock2DCrossAttn
+            ResnetBlock(1280, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            ResnetBlock(1280, 1280, 1280),
+            # UpBlock2D
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280),
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280),
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280),
+            UpSampler(1280),
+            # CrossAttnUpBlock2D
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(2560, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(1920, 1280, 1280),
+            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6),
+            UpSampler(1280),
+            # CrossAttnUpBlock2D
+            PopBlock(),
+            ResnetBlock(1920, 640, 1280),
+            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(1280, 640, 1280),
+            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(960, 640, 1280),
+            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6),
+            UpSampler(640),
+            # CrossAttnUpBlock2D
+            PopBlock(),
+            ResnetBlock(960, 320, 1280),
+            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(640, 320, 1280),
+            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
+            PopBlock(),
+            ResnetBlock(640, 320, 1280),
+            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6),
+        ])
+
+        self.conv_norm_out = nn.GroupNorm(num_channels=320, num_groups=32, eps=1e-5)
+        self.conv_act = nn.SiLU()
+        self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1)
+
+    def forward(self, sample, timestep, encoder_hidden_states, **kwargs):
+        # 1. time
+        time_emb = self.time_embedding(timestep, dtype=sample.dtype)
+
+        # 2. pre-process
+        hidden_states = self.conv_in(sample)
+        text_emb = encoder_hidden_states
+        res_stack = [hidden_states]
+
+        # 3. blocks
+        for i, block in enumerate(self.blocks):
+            hidden_states, time_emb, text_emb, res_stack = block(hidden_states, time_emb, text_emb, res_stack)
+
+        # 4. output
+        hidden_states = self.conv_norm_out(hidden_states)
+        hidden_states = self.conv_act(hidden_states)
+        hidden_states = self.conv_out(hidden_states)
+
+        return hidden_states

@@ -1,54 +1,16 @@
 import torch
 import torch.nn as nn
-
+import logging
+from typing import Dict
 from diffsynth_engine.models.components.clip import CLIPEncoderLayer
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+logger = logging.getLogger(__name__)
 
-
-class SDTextEncoder(nn.Module):
-    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12, encoder_intermediate_size=3072):
-        super().__init__()
-
-        # token_embedding
-        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
-
-        # position_embeds (This is a fixed tensor)
-        self.position_embeds = nn.Parameter(torch.zeros(1, max_position_embeddings, embed_dim))
-
-        # encoders
-        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size) for _ in range(num_encoder_layers)])
-
-        # attn_mask
-        self.attn_mask = self.attention_mask(max_position_embeddings)
-
-        # final_layer_norm
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
-
-    def attention_mask(self, length):
-        mask = torch.empty(length, length)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)
-        return mask
-
-    def forward(self, input_ids, clip_skip=1):
-        embeds = self.token_embedding(input_ids) + self.position_embeds
-        attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
-        for encoder_id, encoder in enumerate(self.encoders):
-            embeds = encoder(embeds, attn_mask=attn_mask)
-            if encoder_id + clip_skip == len(self.encoders):
-                break
-        embeds = self.final_layer_norm(embeds)
-        return embeds
-    
-    @staticmethod
-    def state_dict_converter():
-        return SDTextEncoderStateDictConverter()
-
-
-class SDTextEncoderStateDictConverter:
+class SDTextEncoderStateDictConverter(StateDictConverter):
     def __init__(self):
         pass
 
-    def from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict):
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds",
@@ -80,7 +42,7 @@ class SDTextEncoderStateDictConverter:
                 state_dict_[name_] = param
         return state_dict_
     
-    def from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict):
         rename_dict = {
             "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "cond_stage_model.transformer.text_model.encoder.layers.0.layer_norm1.bias": "encoders.0.layer_norm1.bias",
@@ -287,3 +249,51 @@ class SDTextEncoderStateDictConverter:
                     param = param.reshape((1, param.shape[0], param.shape[1]))
                 state_dict_[rename_dict[name]] = param
         return state_dict_
+
+    def convert(self, state_dict: Dict[str, torch.Tensor]):
+        if "cond_stage_model.transformer.text_model.encoder.layers.0.layer_norm1.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")
+        elif "text_model.encoder.layers.0.layer_norm1.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")
+        else:
+            logger.info("use diffsynth format state dict")
+        return state_dict
+
+class SDTextEncoder(PreTrainedModel):
+    converter = SDTextEncoderStateDictConverter()
+
+    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12, encoder_intermediate_size=3072):
+        super().__init__()
+
+        # token_embedding
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+
+        # position_embeds (This is a fixed tensor)
+        self.position_embeds = nn.Parameter(torch.zeros(1, max_position_embeddings, embed_dim))
+
+        # encoders
+        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size) for _ in range(num_encoder_layers)])
+
+        # attn_mask
+        self.attn_mask = self.attention_mask(max_position_embeddings)
+
+        # final_layer_norm
+        self.final_layer_norm = nn.LayerNorm(embed_dim)
+
+    def attention_mask(self, length):
+        mask = torch.empty(length, length)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)
+        return mask
+
+    def forward(self, input_ids, clip_skip=1):
+        embeds = self.token_embedding(input_ids) + self.position_embeds
+        attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
+        for encoder_id, encoder in enumerate(self.encoders):
+            embeds = encoder(embeds, attn_mask=attn_mask)
+            if encoder_id + clip_skip == len(self.encoders):
+                break
+        embeds = self.final_layer_norm(embeds)
+        return embeds
