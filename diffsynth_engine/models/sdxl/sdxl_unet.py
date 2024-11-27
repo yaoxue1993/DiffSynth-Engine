@@ -1926,18 +1926,7 @@ class SDXLUNet(PreTrainedModel):
     def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype, is_kolors:bool=False):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, is_kolors=is_kolors)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
-
-if __name__ == "__main__":
-    import time
-    from safetensors.torch import load_file
-    #model_path = "/home/dizhipeng.dzp/.cache/huggingface/hub/models--stabilityai--stable-diffusion-xl-base-1.0/snapshots/462165984030d82259a11f4367a4eed129e94a7b/unet/diffusion_pytorch_model.fp16.safetensors"
-    model_path = "/home/dizhipeng.dzp/.cache/datahub/RTPDiffusion/sd_xl_base_1.0/20240425120250/sd_xl_base_1.0.safetensors"
-    state_dict = load_file(model_path)
-    start = time.time()
-    model = SDXLUNet.from_state_dict(state_dict, device='cuda:0', dtype=torch.float16)
-    print(f"time: {time.time() - start}")
-    
-
  

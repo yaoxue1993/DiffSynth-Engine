@@ -8,6 +8,7 @@ from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.basic.unet_helper import ResnetBlock, UpSampler, DownSampler
 from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.utils import no_init_weights
 
 logger = logging.getLogger(__name__)
 
@@ -590,3 +591,28 @@ class VAE(PreTrainedModel):
 
     def decode(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         return self.decoder(sample, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, **kwargs)
+    
+    @classmethod
+    def from_state_dict(cls, 
+        state_dict: Dict[str, torch.Tensor],
+        latent_channels:int=4,
+        scaling_factor:float=0.18215,
+        shift_factor:float=0,
+        use_quant_conv:bool=True,
+        use_post_quant_conv:bool=True,
+        device:str='cuda:0',
+        dtype:torch.dtype=torch.float16
+    ):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(
+                cls, 
+                latent_channels=latent_channels,
+                scaling_factor=scaling_factor,
+                shift_factor=shift_factor,
+                use_quant_conv=use_quant_conv,
+                use_post_quant_conv=use_post_quant_conv,
+                device=device,
+                dtype=dtype
+            )
+        model.load_state_dict(state_dict)
+        return model    

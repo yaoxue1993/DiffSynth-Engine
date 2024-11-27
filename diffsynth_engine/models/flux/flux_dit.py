@@ -1,20 +1,22 @@
-import math
+import logging
+from typing import Dict
 import torch
 import torch.nn as nn
 from einops import rearrange
 
 from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
-from diffsynth_engine.models.utils import init_weights_on_device
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.utils import no_init_weights
 
-
+logger = logging.getLogger(__name__)
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim, single=False):
+    def __init__(self, dim, single=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
         self.single = single
-        self.linear = nn.Linear(dim, dim * (2 if single else 6))
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(dim, dim * (2 if single else 6), device=device, dtype=dtype)
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
 
     def forward(self, x, emb):
         emb = self.linear(nn.functional.silu(emb))
@@ -57,9 +59,9 @@ class RoPEEmbedding(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim, eps):
+    def __init__(self, dim, eps, device:str, dtype:torch.dtype):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones((dim,)))
+        self.weight = nn.Parameter(torch.ones((dim,), device=device, dtype=dtype))
         self.eps = eps
 
     def forward(self, hidden_states):
@@ -71,19 +73,19 @@ class RMSNorm(nn.Module):
 
 
 class FluxJointAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.only_out_a = only_out_a
 
-        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3)
-        self.b_to_qkv = nn.Linear(dim_b, dim_b * 3)
+        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3, device=device, dtype=dtype)
+        self.b_to_qkv = nn.Linear(dim_b, dim_b * 3, device=device, dtype=dtype)
 
-        self.norm_q_a = RMSNorm(head_dim, eps=1e-6)
-        self.norm_k_a = RMSNorm(head_dim, eps=1e-6)
-        self.norm_q_b = RMSNorm(head_dim, eps=1e-6)
-        self.norm_k_b = RMSNorm(head_dim, eps=1e-6)
+        self.norm_q_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
+        self.norm_k_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
+        self.norm_q_b = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
+        self.norm_k_b = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
 
         self.a_to_out = nn.Linear(dim_a, dim_a)
         if not only_out_a:
@@ -132,25 +134,25 @@ class FluxJointAttention(nn.Module):
 
 
 class FluxJointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads):
+    def __init__(self, dim, num_attention_heads, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
-        self.norm1_a = AdaLayerNorm(dim)
-        self.norm1_b = AdaLayerNorm(dim)
+        self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
+        self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
-        self.attn = FluxJointAttention(dim, dim, num_attention_heads, dim // num_attention_heads)
+        self.attn = FluxJointAttention(dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype)
 
-        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
             nn.Linear(dim, dim*4),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim*4, dim)
+            nn.Linear(dim*4, dim, device=device, dtype=dtype)
         )
 
-        self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
-            nn.Linear(dim, dim*4),
+            nn.Linear(dim, dim*4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim*4, dim)
+            nn.Linear(dim*4, dim, device=device, dtype=dtype)
         )
 
 
@@ -175,15 +177,15 @@ class FluxJointTransformerBlock(nn.Module):
 
 
 class FluxSingleAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, device:str, dtype:torch.dtype):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
 
-        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3)
+        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3, device=device, dtype=dtype)
 
-        self.norm_q_a = RMSNorm(head_dim, eps=1e-6)
-        self.norm_k_a = RMSNorm(head_dim, eps=1e-6)
+        self.norm_q_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
+        self.norm_k_a = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
 
 
     def apply_rope(self, xq, xk, freqs_cis):
@@ -211,11 +213,11 @@ class FluxSingleAttention(nn.Module):
 
 
 class AdaLayerNormSingle(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, device:str, dtype:torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(dim, 3 * dim, bias=True)
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(dim, 3 * dim, bias=True, device=device, dtype=dtype)
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
 
 
     def forward(self, x, emb):
@@ -226,16 +228,16 @@ class AdaLayerNormSingle(nn.Module):
 
 
 class FluxSingleTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads):
+    def __init__(self, dim, num_attention_heads, device:str, dtype:torch.dtype):
         super().__init__()
         self.num_heads = num_attention_heads
         self.head_dim = dim // num_attention_heads
         self.dim = dim
 
-        self.norm = AdaLayerNormSingle(dim)
-        self.to_qkv_mlp = nn.Linear(dim, dim * (3 + 4))
-        self.norm_q_a = RMSNorm(self.head_dim, eps=1e-6)
-        self.norm_k_a = RMSNorm(self.head_dim, eps=1e-6)
+        self.norm = AdaLayerNormSingle(dim, device=device, dtype=dtype)
+        self.to_qkv_mlp = nn.Linear(dim, dim * (3 + 4), device=device, dtype=dtype)
+        self.norm_q_a = RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
+        self.norm_k_a = RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
 
         self.proj_out = nn.Linear(dim * 5, dim)
 
@@ -277,11 +279,11 @@ class FluxSingleTransformerBlock(nn.Module):
 
 
 class AdaLayerNormContinuous(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, device:str, dtype:torch.dtype):
         super().__init__()
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(dim, dim * 2, bias=True)
-        self.norm = nn.LayerNorm(dim, eps=1e-6, elementwise_affine=False)
+        self.linear = nn.Linear(dim, dim * 2, bias=True, device=device, dtype=dtype)
+        self.norm = nn.LayerNorm(dim, eps=1e-6, elementwise_affine=False, device=device, dtype=dtype)
 
     def forward(self, x, conditioning):
         emb = self.linear(self.silu(conditioning))
@@ -289,22 +291,218 @@ class AdaLayerNormContinuous(nn.Module):
         x = self.norm(x) * (1 + scale)[:, None] + shift[:, None]
         return x
 
+class FluxDiTStateDictConverter(StateDictConverter):
+    def __init__(self):
+        pass
 
-class FluxDiT(nn.Module):
-    def __init__(self, disable_guidance_embedder=False):
+    def _from_diffusers(self, state_dict):
+        global_rename_dict = {
+            "context_embedder": "context_embedder",
+            "x_embedder": "x_embedder",
+            "time_text_embed.timestep_embedder.linear_1": "time_embedder.timestep_embedder.0",
+            "time_text_embed.timestep_embedder.linear_2": "time_embedder.timestep_embedder.2",
+            "time_text_embed.guidance_embedder.linear_1": "guidance_embedder.timestep_embedder.0",
+            "time_text_embed.guidance_embedder.linear_2": "guidance_embedder.timestep_embedder.2",
+            "time_text_embed.text_embedder.linear_1": "pooled_text_embedder.0",
+            "time_text_embed.text_embedder.linear_2": "pooled_text_embedder.2",
+            "norm_out.linear": "final_norm_out.linear",
+            "proj_out": "final_proj_out",
+        }
+        rename_dict = {
+            "proj_out": "proj_out",
+            "norm1.linear": "norm1_a.linear",
+            "norm1_context.linear": "norm1_b.linear",
+            "attn.to_q": "attn.a_to_q",
+            "attn.to_k": "attn.a_to_k",
+            "attn.to_v": "attn.a_to_v",
+            "attn.to_out.0": "attn.a_to_out",
+            "attn.add_q_proj": "attn.b_to_q",
+            "attn.add_k_proj": "attn.b_to_k",
+            "attn.add_v_proj": "attn.b_to_v",
+            "attn.to_add_out": "attn.b_to_out",
+            "ff.net.0.proj": "ff_a.0",
+            "ff.net.2": "ff_a.2",
+            "ff_context.net.0.proj": "ff_b.0",
+            "ff_context.net.2": "ff_b.2",
+            "attn.norm_q": "attn.norm_q_a",
+            "attn.norm_k": "attn.norm_k_a",
+            "attn.norm_added_q": "attn.norm_q_b",
+            "attn.norm_added_k": "attn.norm_k_b",
+        }
+        rename_dict_single = {
+            "attn.to_q": "a_to_q",
+            "attn.to_k": "a_to_k",
+            "attn.to_v": "a_to_v",
+            "attn.norm_q": "norm_q_a",
+            "attn.norm_k": "norm_k_a",
+            "norm.linear": "norm.linear",
+            "proj_mlp": "proj_in_besides_attn",
+            "proj_out": "proj_out",
+        }
+        state_dict_ = {}
+        for name, param in state_dict.items():
+            if name.endswith(".weight") or name.endswith(".bias"):
+                suffix = ".weight" if name.endswith(".weight") else ".bias"
+                prefix = name[:-len(suffix)]
+                if prefix in global_rename_dict:
+                    state_dict_[global_rename_dict[prefix] + suffix] = param
+                elif prefix.startswith("transformer_blocks."):
+                    names = prefix.split(".")
+                    names[0] = "blocks"
+                    middle = ".".join(names[2:])
+                    if middle in rename_dict:
+                        name_ = ".".join(names[:2] + [rename_dict[middle]] + [suffix[1:]])
+                        state_dict_[name_] = param
+                elif prefix.startswith("single_transformer_blocks."):
+                    names = prefix.split(".")
+                    names[0] = "single_blocks"
+                    middle = ".".join(names[2:])
+                    if middle in rename_dict_single:
+                        name_ = ".".join(names[:2] + [rename_dict_single[middle]] + [suffix[1:]])
+                        state_dict_[name_] = param
+                    else:
+                        pass
+                else:
+                    pass
+        for name in list(state_dict_.keys()):
+            if ".proj_in_besides_attn." in name:
+                name_ = name.replace(".proj_in_besides_attn.", ".to_qkv_mlp.")
+                param = torch.concat([
+                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_q.")],
+                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_k.")],
+                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_v.")],
+                    state_dict_[name],
+                ], dim=0)
+                state_dict_[name_] = param
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_q."))
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_k."))
+                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_v."))
+                state_dict_.pop(name)
+        for name in list(state_dict_.keys()):
+            for component in ["a", "b"]:
+                if f".{component}_to_q." in name:
+                    name_ = name.replace(f".{component}_to_q.", f".{component}_to_qkv.")
+                    param = torch.concat([
+                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_q.")],
+                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_k.")],
+                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_v.")],
+                    ], dim=0)
+                    state_dict_[name_] = param
+                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_q."))
+                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_k."))
+                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_v."))
+        return state_dict_
+    
+    def _from_civitai(self, state_dict):
+        rename_dict = {
+            "time_in.in_layer.bias": "time_embedder.timestep_embedder.0.bias",
+            "time_in.in_layer.weight": "time_embedder.timestep_embedder.0.weight",
+            "time_in.out_layer.bias": "time_embedder.timestep_embedder.2.bias",
+            "time_in.out_layer.weight": "time_embedder.timestep_embedder.2.weight",
+            "txt_in.bias": "context_embedder.bias",
+            "txt_in.weight": "context_embedder.weight",
+            "vector_in.in_layer.bias": "pooled_text_embedder.0.bias",
+            "vector_in.in_layer.weight": "pooled_text_embedder.0.weight",
+            "vector_in.out_layer.bias": "pooled_text_embedder.2.bias",
+            "vector_in.out_layer.weight": "pooled_text_embedder.2.weight",
+            "final_layer.linear.bias": "final_proj_out.bias",
+            "final_layer.linear.weight": "final_proj_out.weight",
+            "guidance_in.in_layer.bias": "guidance_embedder.timestep_embedder.0.bias",
+            "guidance_in.in_layer.weight": "guidance_embedder.timestep_embedder.0.weight",
+            "guidance_in.out_layer.bias": "guidance_embedder.timestep_embedder.2.bias",
+            "guidance_in.out_layer.weight": "guidance_embedder.timestep_embedder.2.weight",
+            "img_in.bias": "x_embedder.bias",
+            "img_in.weight": "x_embedder.weight",
+            "final_layer.adaLN_modulation.1.weight": "final_norm_out.linear.weight",
+            "final_layer.adaLN_modulation.1.bias": "final_norm_out.linear.bias",
+        }
+        suffix_rename_dict = {
+            "img_attn.norm.key_norm.scale": "attn.norm_k_a.weight",
+            "img_attn.norm.query_norm.scale": "attn.norm_q_a.weight",
+            "img_attn.proj.bias": "attn.a_to_out.bias",
+            "img_attn.proj.weight": "attn.a_to_out.weight",
+            "img_attn.qkv.bias": "attn.a_to_qkv.bias",
+            "img_attn.qkv.weight": "attn.a_to_qkv.weight",
+            "img_mlp.0.bias": "ff_a.0.bias",
+            "img_mlp.0.weight": "ff_a.0.weight",
+            "img_mlp.2.bias": "ff_a.2.bias",
+            "img_mlp.2.weight": "ff_a.2.weight",
+            "img_mod.lin.bias": "norm1_a.linear.bias",
+            "img_mod.lin.weight": "norm1_a.linear.weight",
+            "txt_attn.norm.key_norm.scale": "attn.norm_k_b.weight",
+            "txt_attn.norm.query_norm.scale": "attn.norm_q_b.weight",
+            "txt_attn.proj.bias": "attn.b_to_out.bias",
+            "txt_attn.proj.weight": "attn.b_to_out.weight",
+            "txt_attn.qkv.bias": "attn.b_to_qkv.bias",
+            "txt_attn.qkv.weight": "attn.b_to_qkv.weight",
+            "txt_mlp.0.bias": "ff_b.0.bias",
+            "txt_mlp.0.weight": "ff_b.0.weight",
+            "txt_mlp.2.bias": "ff_b.2.bias",
+            "txt_mlp.2.weight": "ff_b.2.weight",
+            "txt_mod.lin.bias": "norm1_b.linear.bias",
+            "txt_mod.lin.weight": "norm1_b.linear.weight",
+
+            "linear1.bias": "to_qkv_mlp.bias",
+            "linear1.weight": "to_qkv_mlp.weight",
+            "linear2.bias": "proj_out.bias",
+            "linear2.weight": "proj_out.weight",
+            "modulation.lin.bias": "norm.linear.bias",
+            "modulation.lin.weight": "norm.linear.weight",
+            "norm.key_norm.scale": "norm_k_a.weight",
+            "norm.query_norm.scale": "norm_q_a.weight",
+        }
+        state_dict_ = {}
+        for name, param in state_dict.items():
+            names = name.split(".")
+            if name in rename_dict:
+                rename = rename_dict[name]
+                if name.startswith("final_layer.adaLN_modulation.1."):
+                    param = torch.concat([param[3072:], param[:3072]], dim=0)
+                state_dict_[rename] = param
+            elif names[0] == "double_blocks":
+                rename = f"blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
+                state_dict_[rename] = param
+            elif names[0] == "single_blocks":
+                if ".".join(names[2:]) in suffix_rename_dict:
+                    rename = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
+                    state_dict_[rename] = param
+            else:
+                pass
+        if "guidance_embedder.timestep_embedder.0.weight" not in state_dict_:
+            return state_dict_, {"disable_guidance_embedder": True}
+        else:
+            return state_dict_
+
+    def convert(self, state_dict):
+        if "txt_in.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")
+        elif "time_text_embed.timestep_embedder.linear_1.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")
+        else:
+            logger.info("user diffsynth format state dict")
+        return state_dict
+
+    
+
+class FluxDiT(PreTrainedModel):
+    converter = FluxDiTStateDictConverter()
+
+    def __init__(self, disable_guidance_embedder=False, device:str='cuda:0', dtype:torch.dtype=torch.float16):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
-        self.time_embedder = TimestepEmbeddings(256, 3072)
-        self.guidance_embedder = None if disable_guidance_embedder else TimestepEmbeddings(256, 3072)
-        self.pooled_text_embedder = nn.Sequential(nn.Linear(768, 3072), nn.SiLU(), nn.Linear(3072, 3072))
-        self.context_embedder = nn.Linear(4096, 3072)
-        self.x_embedder = nn.Linear(64, 3072)
+        self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
+        self.guidance_embedder = None if disable_guidance_embedder else TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
+        self.pooled_text_embedder = nn.Sequential(nn.Linear(768, 3072, device=device, dtype=dtype), nn.SiLU(), nn.Linear(3072, 3072, device=device, dtype=dtype))
+        self.context_embedder = nn.Linear(4096, 3072, device=device, dtype=dtype)
+        self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
-        self.blocks = nn.ModuleList([FluxJointTransformerBlock(3072, 24) for _ in range(19)])
-        self.single_blocks = nn.ModuleList([FluxSingleTransformerBlock(3072, 24) for _ in range(38)])
+        self.blocks = nn.ModuleList([FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)])
+        self.single_blocks = nn.ModuleList([FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)])
 
-        self.final_norm_out = AdaLayerNormContinuous(3072)
-        self.final_proj_out = nn.Linear(3072, 64)
+        self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
+        self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
 
     def patchify(self, hidden_states):
         hidden_states = rearrange(hidden_states, "B C (H P) (W Q) -> B (H W) (C P Q)", P=2, Q=2)
@@ -410,267 +608,17 @@ class FluxDiT(nn.Module):
         hidden_states = self.unpatchify(hidden_states, height, width)
 
         return hidden_states
-
-    def quantize(self):
-        def cast_to(weight, dtype=None, device=None, copy=False):
-            if device is None or weight.device == device:
-                if not copy:
-                    if dtype is None or weight.dtype == dtype:
-                        return weight
-                return weight.to(dtype=dtype, copy=copy)
-
-            r = torch.empty_like(weight, dtype=dtype, device=device)
-            r.copy_(weight)
-            return r
-
-        def cast_weight(s, input=None, dtype=None, device=None):
-            if input is not None:
-                if dtype is None:
-                    dtype = input.dtype
-                if device is None:
-                    device = input.device
-            weight = cast_to(s.weight, dtype, device)
-            return weight
-
-        def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
-            if input is not None:
-                if dtype is None:
-                    dtype = input.dtype
-                if bias_dtype is None:
-                    bias_dtype = dtype
-                if device is None:
-                    device = input.device
-            bias = None
-            weight = cast_to(s.weight, dtype, device)
-            bias = cast_to(s.bias, bias_dtype, device)
-            return weight, bias
-
-        class quantized_layer:
-            class Linear(nn.Linear):
-                def __init__(self, *args, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    
-                def forward(self,input,**kwargs):
-                    weight,bias= cast_bias_weight(self,input)
-                    return nn.functional.linear(input,weight,bias)
-            
-            class RMSNorm(nn.Module):
-                def __init__(self, module):
-                    super().__init__()
-                    self.module = module
-                    
-                def forward(self,hidden_states,**kwargs):
-                    weight= cast_weight(self.module,hidden_states)
-                    input_dtype = hidden_states.dtype
-                    variance = hidden_states.to(torch.float32).square().mean(-1, keepdim=True)
-                    hidden_states = hidden_states * torch.rsqrt(variance + self.module.eps)
-                    hidden_states = hidden_states.to(input_dtype) * weight
-                    return hidden_states
-            
-        def replace_layer(model):
-            for name, module in model.named_children():
-                if isinstance(module, nn.Linear):
-                    with init_weights_on_device():
-                        new_layer = quantized_layer.Linear(module.in_features,module.out_features)
-                    new_layer.weight = module.weight
-                    if module.bias is not None:
-                        new_layer.bias = module.bias
-                    # del module
-                    setattr(model, name, new_layer)
-                elif isinstance(module, RMSNorm):
-                    if hasattr(module,"quantized"):
-                        continue
-                    module.quantized= True
-                    new_layer = quantized_layer.RMSNorm(module)
-                    setattr(model, name, new_layer)
-                else:
-                    replace_layer(module)
-
-        replace_layer(self)
-
-    @staticmethod
-    def state_dict_converter():
-        return FluxDiTStateDictConverter()
-
-
-class FluxDiTStateDictConverter:
-    def __init__(self):
-        pass
-
-    def from_diffusers(self, state_dict):
-        global_rename_dict = {
-            "context_embedder": "context_embedder",
-            "x_embedder": "x_embedder",
-            "time_text_embed.timestep_embedder.linear_1": "time_embedder.timestep_embedder.0",
-            "time_text_embed.timestep_embedder.linear_2": "time_embedder.timestep_embedder.2",
-            "time_text_embed.guidance_embedder.linear_1": "guidance_embedder.timestep_embedder.0",
-            "time_text_embed.guidance_embedder.linear_2": "guidance_embedder.timestep_embedder.2",
-            "time_text_embed.text_embedder.linear_1": "pooled_text_embedder.0",
-            "time_text_embed.text_embedder.linear_2": "pooled_text_embedder.2",
-            "norm_out.linear": "final_norm_out.linear",
-            "proj_out": "final_proj_out",
-        }
-        rename_dict = {
-            "proj_out": "proj_out",
-            "norm1.linear": "norm1_a.linear",
-            "norm1_context.linear": "norm1_b.linear",
-            "attn.to_q": "attn.a_to_q",
-            "attn.to_k": "attn.a_to_k",
-            "attn.to_v": "attn.a_to_v",
-            "attn.to_out.0": "attn.a_to_out",
-            "attn.add_q_proj": "attn.b_to_q",
-            "attn.add_k_proj": "attn.b_to_k",
-            "attn.add_v_proj": "attn.b_to_v",
-            "attn.to_add_out": "attn.b_to_out",
-            "ff.net.0.proj": "ff_a.0",
-            "ff.net.2": "ff_a.2",
-            "ff_context.net.0.proj": "ff_b.0",
-            "ff_context.net.2": "ff_b.2",
-            "attn.norm_q": "attn.norm_q_a",
-            "attn.norm_k": "attn.norm_k_a",
-            "attn.norm_added_q": "attn.norm_q_b",
-            "attn.norm_added_k": "attn.norm_k_b",
-        }
-        rename_dict_single = {
-            "attn.to_q": "a_to_q",
-            "attn.to_k": "a_to_k",
-            "attn.to_v": "a_to_v",
-            "attn.norm_q": "norm_q_a",
-            "attn.norm_k": "norm_k_a",
-            "norm.linear": "norm.linear",
-            "proj_mlp": "proj_in_besides_attn",
-            "proj_out": "proj_out",
-        }
-        state_dict_ = {}
-        for name, param in state_dict.items():
-            if name.endswith(".weight") or name.endswith(".bias"):
-                suffix = ".weight" if name.endswith(".weight") else ".bias"
-                prefix = name[:-len(suffix)]
-                if prefix in global_rename_dict:
-                    state_dict_[global_rename_dict[prefix] + suffix] = param
-                elif prefix.startswith("transformer_blocks."):
-                    names = prefix.split(".")
-                    names[0] = "blocks"
-                    middle = ".".join(names[2:])
-                    if middle in rename_dict:
-                        name_ = ".".join(names[:2] + [rename_dict[middle]] + [suffix[1:]])
-                        state_dict_[name_] = param
-                elif prefix.startswith("single_transformer_blocks."):
-                    names = prefix.split(".")
-                    names[0] = "single_blocks"
-                    middle = ".".join(names[2:])
-                    if middle in rename_dict_single:
-                        name_ = ".".join(names[:2] + [rename_dict_single[middle]] + [suffix[1:]])
-                        state_dict_[name_] = param
-                    else:
-                        pass
-                else:
-                    pass
-        for name in list(state_dict_.keys()):
-            if ".proj_in_besides_attn." in name:
-                name_ = name.replace(".proj_in_besides_attn.", ".to_qkv_mlp.")
-                param = torch.concat([
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_q.")],
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_k.")],
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_v.")],
-                    state_dict_[name],
-                ], dim=0)
-                state_dict_[name_] = param
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_q."))
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_k."))
-                state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_v."))
-                state_dict_.pop(name)
-        for name in list(state_dict_.keys()):
-            for component in ["a", "b"]:
-                if f".{component}_to_q." in name:
-                    name_ = name.replace(f".{component}_to_q.", f".{component}_to_qkv.")
-                    param = torch.concat([
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_q.")],
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_k.")],
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_v.")],
-                    ], dim=0)
-                    state_dict_[name_] = param
-                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_q."))
-                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_k."))
-                    state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_v."))
-        return state_dict_
     
-    def from_civitai(self, state_dict):
-        rename_dict = {
-            "time_in.in_layer.bias": "time_embedder.timestep_embedder.0.bias",
-            "time_in.in_layer.weight": "time_embedder.timestep_embedder.0.weight",
-            "time_in.out_layer.bias": "time_embedder.timestep_embedder.2.bias",
-            "time_in.out_layer.weight": "time_embedder.timestep_embedder.2.weight",
-            "txt_in.bias": "context_embedder.bias",
-            "txt_in.weight": "context_embedder.weight",
-            "vector_in.in_layer.bias": "pooled_text_embedder.0.bias",
-            "vector_in.in_layer.weight": "pooled_text_embedder.0.weight",
-            "vector_in.out_layer.bias": "pooled_text_embedder.2.bias",
-            "vector_in.out_layer.weight": "pooled_text_embedder.2.weight",
-            "final_layer.linear.bias": "final_proj_out.bias",
-            "final_layer.linear.weight": "final_proj_out.weight",
-            "guidance_in.in_layer.bias": "guidance_embedder.timestep_embedder.0.bias",
-            "guidance_in.in_layer.weight": "guidance_embedder.timestep_embedder.0.weight",
-            "guidance_in.out_layer.bias": "guidance_embedder.timestep_embedder.2.bias",
-            "guidance_in.out_layer.weight": "guidance_embedder.timestep_embedder.2.weight",
-            "img_in.bias": "x_embedder.bias",
-            "img_in.weight": "x_embedder.weight",
-            "final_layer.adaLN_modulation.1.weight": "final_norm_out.linear.weight",
-            "final_layer.adaLN_modulation.1.bias": "final_norm_out.linear.bias",
-        }
-        suffix_rename_dict = {
-            "img_attn.norm.key_norm.scale": "attn.norm_k_a.weight",
-            "img_attn.norm.query_norm.scale": "attn.norm_q_a.weight",
-            "img_attn.proj.bias": "attn.a_to_out.bias",
-            "img_attn.proj.weight": "attn.a_to_out.weight",
-            "img_attn.qkv.bias": "attn.a_to_qkv.bias",
-            "img_attn.qkv.weight": "attn.a_to_qkv.weight",
-            "img_mlp.0.bias": "ff_a.0.bias",
-            "img_mlp.0.weight": "ff_a.0.weight",
-            "img_mlp.2.bias": "ff_a.2.bias",
-            "img_mlp.2.weight": "ff_a.2.weight",
-            "img_mod.lin.bias": "norm1_a.linear.bias",
-            "img_mod.lin.weight": "norm1_a.linear.weight",
-            "txt_attn.norm.key_norm.scale": "attn.norm_k_b.weight",
-            "txt_attn.norm.query_norm.scale": "attn.norm_q_b.weight",
-            "txt_attn.proj.bias": "attn.b_to_out.bias",
-            "txt_attn.proj.weight": "attn.b_to_out.weight",
-            "txt_attn.qkv.bias": "attn.b_to_qkv.bias",
-            "txt_attn.qkv.weight": "attn.b_to_qkv.weight",
-            "txt_mlp.0.bias": "ff_b.0.bias",
-            "txt_mlp.0.weight": "ff_b.0.weight",
-            "txt_mlp.2.bias": "ff_b.2.bias",
-            "txt_mlp.2.weight": "ff_b.2.weight",
-            "txt_mod.lin.bias": "norm1_b.linear.bias",
-            "txt_mod.lin.weight": "norm1_b.linear.weight",
-
-            "linear1.bias": "to_qkv_mlp.bias",
-            "linear1.weight": "to_qkv_mlp.weight",
-            "linear2.bias": "proj_out.bias",
-            "linear2.weight": "proj_out.weight",
-            "modulation.lin.bias": "norm.linear.bias",
-            "modulation.lin.weight": "norm.linear.weight",
-            "norm.key_norm.scale": "norm_k_a.weight",
-            "norm.query_norm.scale": "norm_q_a.weight",
-        }
-        state_dict_ = {}
-        for name, param in state_dict.items():
-            names = name.split(".")
-            if name in rename_dict:
-                rename = rename_dict[name]
-                if name.startswith("final_layer.adaLN_modulation.1."):
-                    param = torch.concat([param[3072:], param[:3072]], dim=0)
-                state_dict_[rename] = param
-            elif names[0] == "double_blocks":
-                rename = f"blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
-                state_dict_[rename] = param
-            elif names[0] == "single_blocks":
-                if ".".join(names[2:]) in suffix_rename_dict:
-                    rename = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
-                    state_dict_[rename] = param
-            else:
-                pass
-        if "guidance_embedder.timestep_embedder.0.weight" not in state_dict_:
-            return state_dict_, {"disable_guidance_embedder": True}
-        else:
-            return state_dict_
+    @classmethod
+    def from_state_dict(
+        cls, 
+        state_dict: Dict[str, torch.Tensor], 
+        device: str, 
+        dtype: torch.dtype,
+        disable_guidance_embedder: bool=False
+    ):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model

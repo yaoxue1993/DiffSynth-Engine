@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
+from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.basic.unet_helper import (
     ResnetBlock, 
     AttentionBlock, 
@@ -781,6 +782,8 @@ class SDUNetStateDictConverter(StateDictConverter):
         elif "down_blocks.0.attentions.0.norm.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
             logger.info("use diffsynth format state dict")
+        else:
+            logger.info("user diffsynth format state dict")            
         return state_dict
     
 
@@ -894,3 +897,11 @@ class SDUNet(PreTrainedModel):
         hidden_states = self.conv_out(hidden_states)
 
         return hidden_states
+    
+    @classmethod
+    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model
