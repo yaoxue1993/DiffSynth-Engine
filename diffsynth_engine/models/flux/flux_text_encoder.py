@@ -74,23 +74,7 @@ class FluxTextEncoder1(SDTextEncoder):
         model.load_state_dict(state_dict)
         return model
 
-
-class FluxTextEncoder2StateDictConverter(StateDictConverter):
-    def _from_diffusers(self, state_dict):
-
-        return state_dict
-
-    def convert(self, state_dict):
-        if "encoder.block.0.layer.0.SelfAttention.v.weight" in state_dict:
-            state_dict = self._from_diffusers(state_dict)
-            logger.info("use diffusers format state dict")  
-        else:
-            logger.info("use diffsynth format state dict")
-        return state_dict
-
 class FluxTextEncoder2(T5EncoderModel):
-    converter = FluxTextEncoder2StateDictConverter()
-
     def __init__(self, device:str="cuda:0", dtype:torch.dtype=torch.float16):
         super().__init__(
             embed_dim=4096,
