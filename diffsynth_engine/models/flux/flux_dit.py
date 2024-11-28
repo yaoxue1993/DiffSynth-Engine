@@ -150,6 +150,7 @@ class FluxSingleAttention(nn.Module):
         hidden_states = hidden_states.to(q.dtype)
         return hidden_states
 
+
 class FluxSingleTransformerBlock(nn.Module):
     def __init__(self, dim, num_attention_heads, device: str, dtype: torch.dtype):
         super().__init__()
@@ -219,7 +220,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
     def __init__(self):
         pass
 
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         global_rename_dict = {
             "context_embedder": "context_embedder",
             "x_embedder": "x_embedder",
@@ -317,7 +318,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
                     state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_v."))
         return state_dict_
 
-    def _from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "time_in.in_layer.bias": "time_embedder.timestep_embedder.0.bias",
             "time_in.in_layer.weight": "time_embedder.timestep_embedder.0.weight",
@@ -397,7 +398,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
         else:
             return state_dict_
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "txt_in.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")

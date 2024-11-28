@@ -3,8 +3,6 @@ import torch.nn as nn
 from einops import rearrange
 
 
-
-
 def low_version_attention(query, key, value, attn_bias=None):
     scale = 1 / query.shape[-1] ** 0.5
     query = query * scale
@@ -14,19 +12,20 @@ def low_version_attention(query, key, value, attn_bias=None):
     attn = attn.softmax(-1)
     return attn @ value
 
+
 class Attention(nn.Module):
-    def __init__(self, 
-        q_dim, 
-        num_heads, 
-        head_dim, 
-        kv_dim=None, 
-        bias_q=False, 
-        bias_kv=False, 
-        bias_out=False, 
-        use_xformers=False,
-        device:str='cuda:0', 
-        dtype:torch.dtype=torch.float16
-    ):
+    def __init__(self,
+                 q_dim,
+                 num_heads,
+                 head_dim,
+                 kv_dim=None,
+                 bias_q=False,
+                 bias_kv=False,
+                 bias_out=False,
+                 use_xformers=False,
+                 device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16
+                 ):
         super().__init__()
         dim_inner = head_dim * num_heads
         kv_dim = kv_dim if kv_dim is not None else q_dim
@@ -69,7 +68,7 @@ class Attention(nn.Module):
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
         return hidden_states
-    
+
     def original_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
@@ -84,16 +83,16 @@ class Attention(nn.Module):
         hidden_states = self.to_out(hidden_states)
         return hidden_states
 
-    def forward(self, 
-        hidden_states,
-        encoder_hidden_states=None,
-        attn_mask=None,
-    ):
+    def forward(self,
+                hidden_states,
+                encoder_hidden_states=None,
+                attn_mask=None,
+                ):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
         if self.use_xformers:
             return self.xformers_attn(hidden_states, encoder_hidden_states, attn_mask)
-        
+
         if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
             # 检查是否支持sdpa            
             return self.sdpa_attn(hidden_states, encoder_hidden_states, attn_mask)

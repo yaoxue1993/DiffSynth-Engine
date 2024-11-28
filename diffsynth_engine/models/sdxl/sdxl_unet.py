@@ -19,7 +19,7 @@ logger = logging.get_logger(__name__)
 
 
 class SDXLUNetStateDictConverter(StateDictConverter):
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # architecture
         block_types = [
             'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock', 'DownSampler', 'PushBlock',
@@ -86,7 +86,7 @@ class SDXLUNetStateDictConverter(StateDictConverter):
         else:
             return state_dict_
 
-    def _from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "model.diffusion_model.input_blocks.0.0.bias": "conv_in.bias",
             "model.diffusion_model.input_blocks.0.0.weight": "conv_in.weight",
@@ -1781,7 +1781,7 @@ class SDXLUNetStateDictConverter(StateDictConverter):
         else:
             return state_dict_
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "model.diffusion_model.input_blocks.0.0.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")

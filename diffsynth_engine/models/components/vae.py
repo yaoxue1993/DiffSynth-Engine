@@ -19,7 +19,7 @@ class VAEStateDictConverter(StateDictConverter):
         self.has_encoder = has_encoder
         self.has_decoder = has_decoder
 
-    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             # decoder
             "first_stage_model.decoder.conv_in.bias": "decoder.conv_in.bias",
@@ -413,7 +413,7 @@ class VAEDecoder(PreTrainedModel):
             return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
 
         # 1. pre-process
-        sample = (sample + self.shift_factor) / self.scaling_factor
+        sample = sample / self.scaling_factor + self.shift_factor
         if self.use_post_quant_conv:
             sample = self.post_quant_conv(sample)
         hidden_states = self.conv_in(sample)
@@ -505,7 +505,7 @@ class VAEEncoder(PreTrainedModel):
 
         self.conv_norm_out = nn.GroupNorm(num_channels=512, num_groups=32, eps=1e-6, device=device, dtype=dtype)
         self.conv_act = nn.SiLU()
-        self.conv_out = nn.Conv2d(512, 8, kernel_size=3, padding=1, device=device, dtype=dtype)
+        self.conv_out = nn.Conv2d(512, 2 * latent_channels, kernel_size=3, padding=1, device=device, dtype=dtype)
 
     def _tiled_forward(self, sample, tile_size=64, tile_stride=32):
         hidden_states = TileWorker().tiled_forward(

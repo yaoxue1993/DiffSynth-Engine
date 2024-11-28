@@ -1,18 +1,19 @@
 import torch
 import torch.nn as nn
-from typing import Optional
+from typing import Dict, Optional
 
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.relative_position_emb import RelativePositionEmbedding
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm, NewGELUActivation
-from diffsynth_engine.models.basic.attention import Attention    
+from diffsynth_engine.models.basic.attention import Attention
 import logging
 
 logger = logging.getLogger(__name__)
 
+
 class T5FeedForward(nn.Module):
     # T5DenseGatedActDense
-    def __init__(self, d_model, d_ff, dropout_rate, device:str='cuda:0', dtype:torch.dtype=torch.float16):
+    def __init__(self, d_model, d_ff, dropout_rate, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.wi_0 = nn.Linear(d_model, d_ff, bias=False, device=device, dtype=dtype)
         self.wi_1 = nn.Linear(d_model, d_ff, bias=False, device=device, dtype=dtype)
@@ -28,17 +29,18 @@ class T5FeedForward(nn.Module):
         hidden_states = hidden_states.to(self.wo.weight.dtype)
         hidden_states = self.wo(hidden_states)
         return hidden_states
-        
+
+
 class T5EncoderLayer(nn.Module):
     def __init__(self,
-                 embed_dim:int, 
-                 num_heads:int, 
-                 head_dim:int, 
-                 d_ff:int, 
-                 eps:float, 
-                 dropout_rate:float = 0.0, 
-                 device:str='cuda:0', 
-                 dtype:torch.dtype=torch.float16):
+                 embed_dim: int,
+                 num_heads: int,
+                 head_dim: int,
+                 d_ff: int,
+                 eps: float,
+                 dropout_rate: float = 0.0,
+                 device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16):
         super().__init__()
         self.attn = Attention(
             q_dim=embed_dim,
@@ -62,15 +64,16 @@ class T5EncoderLayer(nn.Module):
         attn_output = self.attn(
             self.attn_norm(hidden_states),
             mask=attention_mask,
-            position_bias=position_bias            
+            position_bias=position_bias
         )
         hidden_states = hidden_states + self.dropout(attn_output)
         # Apply Feed Forward layer
         hidden_states = hidden_states + self.dropout(self.ffn_norm(self.feed_forward(hidden_states)))
         return hidden_states, position_bias
 
+
 class T5EncoderModelStateDictConverter(StateDictConverter):
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": "relative_position_embedding.relative_attention_bias.weight",
             "encoder.final_layer_norm.weight": "final_layer_norm.weight",
@@ -102,29 +105,31 @@ class T5EncoderModelStateDictConverter(StateDictConverter):
             new_state_dict[new_key] = param
         return new_state_dict
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "encoder.block.0.layer.0.SelfAttention.v.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
-            logger.info("use diffusers format state dict")  
+            logger.info("use diffusers format state dict")
         else:
             logger.info("use diffsynth format state dict")
         return state_dict
 
+
 class T5EncoderModel(PreTrainedModel):
-    converter = T5EncoderModelStateDictConverter()    
+    converter = T5EncoderModelStateDictConverter()
+
     def __init__(
-        self,
-        embed_dim: int = 4096,
-        vocab_size: int = 32128,
-        num_encoder_layers: int = 24,
-        d_ff: int = 10240,
-        num_heads: int = 64,
-        relative_attention_num_buckets: int = 32,
-        relative_attention_max_distance: int = 128,
-        dropout_rate: float = 0.1,
-        eps: float = 1e-6,
-        device: str = "cuda:0",
-        dtype: torch.dtype = torch.float16
+            self,
+            embed_dim: int = 4096,
+            vocab_size: int = 32128,
+            num_encoder_layers: int = 24,
+            d_ff: int = 10240,
+            num_heads: int = 64,
+            relative_attention_num_buckets: int = 32,
+            relative_attention_max_distance: int = 128,
+            dropout_rate: float = 0.1,
+            eps: float = 1e-6,
+            device: str = "cuda:0",
+            dtype: torch.dtype = torch.float16
     ):
         super().__init__()
 
@@ -139,13 +144,13 @@ class T5EncoderModel(PreTrainedModel):
         # encoders
         self.encoders = nn.ModuleList([
             T5EncoderLayer(
-                embed_dim=embed_dim, 
-                num_heads=num_heads, 
-                head_dim=embed_dim // num_heads, 
-                d_ff=d_ff, 
-                eps=eps, 
-                dropout_rate=dropout_rate, 
-                device=device, 
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                head_dim=embed_dim // num_heads,
+                d_ff=d_ff,
+                eps=eps,
+                dropout_rate=dropout_rate,
+                device=device,
                 dtype=dtype
             ) for i in range(num_encoder_layers)
         ])
@@ -156,8 +161,7 @@ class T5EncoderModel(PreTrainedModel):
         # dropout
         self.dropout = nn.Dropout(dropout_rate)
 
-    
-    def forward(self, input_ids:torch.LongTensor, attention_mask: Optional[torch.FloatTensor] = None):
+    def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.FloatTensor] = None):
         inputs_embeds = self.token_embedding(input_ids)
         hidden_states = self.dropout(inputs_embeds)
         seq_len = hidden_states.shape[1]
@@ -170,11 +174,10 @@ class T5EncoderModel(PreTrainedModel):
         else:
             attention_mask = position_bias
         for layer_module in self.encoders:
-            hidden_states= layer_module(
-                hidden_states, 
+            hidden_states = layer_module(
+                hidden_states,
                 attention_mask=attention_mask
             )
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
-

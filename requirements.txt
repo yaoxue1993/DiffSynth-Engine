@@ -1,4 +1,5 @@
 torch>=2.4.0
+xformers
 cupy-cuda12x
 safetensors
 einops

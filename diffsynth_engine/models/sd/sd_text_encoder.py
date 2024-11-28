@@ -14,7 +14,7 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
     def __init__(self):
         pass
 
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds",
@@ -46,7 +46,7 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
                 state_dict_[name_] = param
         return state_dict_
 
-    def _from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "cond_stage_model.transformer.text_model.encoder.layers.0.layer_norm1.bias": "encoders.0.layer_norm1.bias",
@@ -254,7 +254,7 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
                 state_dict_[rename_dict[name]] = param
         return state_dict_
 
-    def convert(self, state_dict: Dict[str, torch.Tensor]):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "cond_stage_model.transformer.text_model.encoder.layers.0.layer_norm1.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")

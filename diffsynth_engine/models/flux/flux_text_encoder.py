@@ -1,14 +1,17 @@
 import torch
-import logging
 from typing import Dict
-from diffsynth_engine.models.sd.sd_text_encoder import SDTextEncoder
+
+from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.models.components.t5 import T5EncoderModel
 from diffsynth_engine.models.base import StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
-logger = logging.getLogger(__name__)
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
+
 
 class FluxTextEncoder1StateDictConverter(StateDictConverter):
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds",
@@ -40,20 +43,19 @@ class FluxTextEncoder1StateDictConverter(StateDictConverter):
                 state_dict_[name_] = param
         return state_dict_
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "text_model.final_layer_norm.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
-            logger.info("use diffusers format state dict")            
+            logger.info("use diffusers format state dict")
         else:
-            logger.info("user diffsynth format state dict")            
+            logger.info("user diffsynth format state dict")
         return state_dict
 
-        
 
 class FluxTextEncoder1(SDTextEncoder):
     converter = FluxTextEncoder1StateDictConverter()
 
-    def __init__(self, vocab_size=49408, device:str="cuda:0", dtype:torch.dtype=torch.float16):
+    def __init__(self, vocab_size=49408, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
 
     def forward(self, input_ids, clip_skip=2):
@@ -66,16 +68,18 @@ class FluxTextEncoder1(SDTextEncoder):
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
         return embeds, pooled_embeds
-    
+
     @classmethod
-    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype, vocab_size:int=49408):
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype,
+                        vocab_size: int = 49408):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
         model.load_state_dict(state_dict)
         return model
 
+
 class FluxTextEncoder2(T5EncoderModel):
-    def __init__(self, device:str="cuda:0", dtype:torch.dtype=torch.float16):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__(
             embed_dim=4096,
             vocab_size=32128,
@@ -85,8 +89,8 @@ class FluxTextEncoder2(T5EncoderModel):
             relative_attention_num_buckets=32,
             relative_attention_max_distance=128,
             dropout_rate=0.1,
-            eps=1e-6,            
-            device=device, 
+            eps=1e-6,
+            device=device,
             dtype=dtype
         )
 

@@ -11,7 +11,7 @@ logger = logging.get_logger(__name__)
 
 
 class SDXLTextEncoderStateDictConverter(StateDictConverter):
-    def _from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds"
@@ -44,7 +44,7 @@ class SDXLTextEncoderStateDictConverter(StateDictConverter):
                 state_dict_[name_] = param
         return state_dict_
 
-    def _from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "conditioner.embedders.0.transformer.text_model.embeddings.position_embedding.weight": "position_embeds",
             "conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight": "token_embedding.weight",
@@ -234,20 +234,20 @@ class SDXLTextEncoderStateDictConverter(StateDictConverter):
                 state_dict_[rename_dict[name]] = param
         return state_dict_
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm1.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
-            logger.info("use diffusers format state dict")
+            logger.info("use civitai format state dict")
         elif "text_model.final_layer_norm.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
-            logger.info("use civitai format state dict")
+            logger.info("use diffusers format state dict")
         else:
             logger.info("use diffsynth format state dict")
         return state_dict
 
 
-class SDXLTextEncoder2StateDictConverter:
-    def _from_diffusers(self, state_dict):
+class SDXLTextEncoder2StateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds",
@@ -280,7 +280,7 @@ class SDXLTextEncoder2StateDictConverter:
                 state_dict_[name_] = param
         return state_dict_
 
-    def _from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "conditioner.embedders.1.model.ln_final.bias": "final_layer_norm.bias",
             "conditioner.embedders.1.model.ln_final.weight": "final_layer_norm.weight",
@@ -794,7 +794,7 @@ class SDXLTextEncoder2StateDictConverter:
                         state_dict_[rename] = param[i * length: i * length + length]
         return state_dict_
 
-    def convert(self, state_dict):
+    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "conditioner.embedders.1.model.transformer.resblocks.0.ln_1.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
