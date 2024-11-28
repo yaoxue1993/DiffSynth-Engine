@@ -3,10 +3,8 @@ import logging
 from typing import Dict
 from diffsynth_engine.models.sd.sd_text_encoder import SDTextEncoder
 from diffsynth_engine.models.components.t5 import T5EncoderModel
-from diffsynth_engine.configs import T5Config
 from diffsynth_engine.models.base import StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
-from transformers import T5EncoderModel
 logger = logging.getLogger(__name__)
 
 class FluxTextEncoder1StateDictConverter(StateDictConverter):
@@ -78,8 +76,17 @@ class FluxTextEncoder1(SDTextEncoder):
 
 
 class FluxTextEncoder2StateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict):
+
+        return state_dict
+
     def convert(self, state_dict):
-        return state_dict   
+        if "encoder.block.0.layer.0.SelfAttention.v.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")  
+        else:
+            logger.info("use diffsynth format state dict")
+        return state_dict
 
 class FluxTextEncoder2(T5EncoderModel):
     converter = FluxTextEncoder2StateDictConverter()

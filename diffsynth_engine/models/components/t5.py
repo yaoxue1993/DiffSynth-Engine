@@ -48,7 +48,7 @@ class T5EncoderLayer(nn.Module):
         self.attn_norm = RMSNorm(embed_dim, eps=eps, device=device, dtype=dtype)
         self.feed_forward = T5FeedForward(embed_dim, d_ff, dropout_rate, device=device, dtype=dtype)
         self.ffn_norm = RMSNorm(embed_dim, eps=eps, device=device, dtype=dtype)
-        self.dropout = nn.Dropout(dropout_rate, device=device, dtype=dtype)
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(
             self,
