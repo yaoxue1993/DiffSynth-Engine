@@ -132,10 +132,10 @@ class T5TokenizerFast(BaseTokenizer):
     def convert_tokens_to_ids(self, tokens: Union[str, List[str]]) -> Union[int, List[int]]:
         if isinstance(tokens, str):
             index = self._tokenizer.token_to_id(tokens)
-            return index if index else self._tokenizer.token_to_id(self.unk_token)
+            return index if index is not None else self._tokenizer.token_to_id(self.unk_token)
 
         ids = [self._tokenizer.token_to_id(token) for token in tokens]
-        return [index if index else self._tokenizer.token_to_id(self.unk_token) for index in ids]
+        return [index if index is not None else self._tokenizer.token_to_id(self.unk_token) for index in ids]
 
     def convert_ids_to_tokens(self, ids: Union[int, List[int]], skip_special_tokens: bool = False) -> Union[str, List[str]]:
         if isinstance(ids, int):

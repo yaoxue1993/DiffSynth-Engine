@@ -275,7 +275,7 @@ class CLIPTokenizer(BaseTokenizer):
 
         for i, text in enumerate(texts):
             tokens = self.tokenize(text)
-            ids = [[self.bos_token_id] + self.convert_tokens_to_ids(tokens) + [self.eos_token_id]]
+            ids = [self.bos_token_id] + self.convert_tokens_to_ids(tokens) + [self.eos_token_id]
             if len(ids) > max_length:
                 ids = ids[:max_length]
                 ids[-1] = self.eos_token_id
