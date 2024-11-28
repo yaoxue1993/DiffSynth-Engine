@@ -1,50 +1,16 @@
 import torch
-
+import logging
+from typing import Dict
 from diffsynth_engine.models.sd.sd_text_encoder import SDTextEncoder
 from diffsynth_engine.models.components.t5 import T5EncoderModel
 from diffsynth_engine.configs import T5Config
+from diffsynth_engine.models.base import StateDictConverter
+from diffsynth_engine.models.utils import no_init_weights
+from transformers import T5EncoderModel
+logger = logging.getLogger(__name__)
 
-
-class FluxTextEncoder1(SDTextEncoder):
-    def __init__(self, vocab_size=49408):
-        super().__init__(vocab_size=vocab_size)
-
-    def forward(self, input_ids, clip_skip=2):
-        embeds = self.token_embedding(input_ids) + self.position_embeds
-        attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
-        for encoder_id, encoder in enumerate(self.encoders):
-            embeds = encoder(embeds, attn_mask=attn_mask)
-            if encoder_id + clip_skip == len(self.encoders):
-                hidden_states = embeds
-        embeds = self.final_layer_norm(embeds)
-        pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
-        return embeds, pooled_embeds
-
-    @staticmethod
-    def state_dict_converter():
-        return FluxTextEncoder1StateDictConverter()
-
-
-class FluxTextEncoder2(T5EncoderModel):
-    def __init__(self, config: T5Config):
-        super().__init__(config)
-        self.eval()
-
-    def forward(self, input_ids):
-        outputs = super().forward(input_ids=input_ids)
-        prompt_emb = outputs.last_hidden_state
-        return prompt_emb
-
-    @staticmethod
-    def state_dict_converter():
-        return FluxTextEncoder2StateDictConverter()
-
-
-class FluxTextEncoder1StateDictConverter:
-    def __init__(self):
-        pass
-
-    def from_diffusers(self, state_dict):
+class FluxTextEncoder1StateDictConverter(StateDictConverter):
+    def _from_diffusers(self, state_dict):
         rename_dict = {
             "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
             "text_model.embeddings.position_embedding.weight": "position_embeds",
@@ -76,17 +42,62 @@ class FluxTextEncoder1StateDictConverter:
                 state_dict_[name_] = param
         return state_dict_
 
-    def from_civitai(self, state_dict):
-        return self.from_diffusers(state_dict)
+    def convert(self, state_dict):
+        if "text_model.final_layer_norm.weight" in state_dict:
+            state_dict = self._from_diffusers(state_dict)
+            logger.info("use diffusers format state dict")            
+        else:
+            logger.info("user diffsynth format state dict")            
+        return state_dict
+
+        
+
+class FluxTextEncoder1(SDTextEncoder):
+    converter = FluxTextEncoder1StateDictConverter()
+
+    def __init__(self, vocab_size=49408, device:str="cuda:0", dtype:torch.dtype=torch.float16):
+        super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
+
+    def forward(self, input_ids, clip_skip=2):
+        embeds = self.token_embedding(input_ids) + self.position_embeds
+        attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
+        for encoder_id, encoder in enumerate(self.encoders):
+            embeds = encoder(embeds, attn_mask=attn_mask)
+            if encoder_id + clip_skip == len(self.encoders):
+                hidden_states = embeds
+        embeds = self.final_layer_norm(embeds)
+        pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
+        return embeds, pooled_embeds
+    
+    @classmethod
+    def from_state_dict(cls, state_dict:Dict[str, torch.Tensor], device:str, dtype:torch.dtype, vocab_size:int=49408):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
+        model.load_state_dict(state_dict)
+        return model
 
 
-class FluxTextEncoder2StateDictConverter:
-    def __init__(self):
-        pass
+class FluxTextEncoder2StateDictConverter(StateDictConverter):
+    def convert(self, state_dict):
+        return state_dict   
 
-    def from_diffusers(self, state_dict):
-        state_dict_ = state_dict
-        return state_dict_
+class FluxTextEncoder2(T5EncoderModel):
+    converter = FluxTextEncoder2StateDictConverter()
 
-    def from_civitai(self, state_dict):
-        return self.from_diffusers(state_dict)
+    def __init__(self, device:str="cuda:0", dtype:torch.dtype=torch.float16):
+        super().__init__(
+            embed_dim=4096,
+            vocab_size=32128,
+            num_encoder_layers=24,
+            d_ff=10240,
+            num_heads=64,
+            relative_attention_num_buckets=32,
+            relative_attention_max_distance=128,
+            dropout_rate=0.1,
+            eps=1e-6,            
+            device=device, 
+            dtype=dtype
+        )
+
+    def forward(self, input_ids):
+        return super().forward(input_ids=input_ids)

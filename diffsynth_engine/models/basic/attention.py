@@ -3,6 +3,8 @@ import torch.nn as nn
 from einops import rearrange
 
 
+
+
 def low_version_attention(query, key, value, attn_bias=None):
     scale = 1 / query.shape[-1] ** 0.5
     query = query * scale
@@ -12,11 +14,19 @@ def low_version_attention(query, key, value, attn_bias=None):
     attn = attn.softmax(-1)
     return attn @ value
 
-
 class Attention(nn.Module):
-
-    def __init__(self, q_dim, num_heads, head_dim, kv_dim=None, bias_q=False, bias_kv=False, bias_out=False,
-                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, 
+        q_dim, 
+        num_heads, 
+        head_dim, 
+        kv_dim=None, 
+        bias_q=False, 
+        bias_kv=False, 
+        bias_out=False, 
+        use_xformers=False,
+        device:str='cuda:0', 
+        dtype:torch.dtype=torch.float16
+    ):
         super().__init__()
         dim_inner = head_dim * num_heads
         kv_dim = kv_dim if kv_dim is not None else q_dim
@@ -28,67 +38,63 @@ class Attention(nn.Module):
         self.to_v = nn.Linear(kv_dim, dim_inner, bias=bias_kv, device=device, dtype=dtype)
         self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out, device=device, dtype=dtype)
 
-    def interact_with_ipadapter(self, hidden_states, q, ip_k, ip_v, scale=1.0):
-        batch_size = q.shape[0]
-        ip_k = ip_k.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        ip_v = ip_v.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        ip_hidden_states = nn.functional.scaled_dot_product_attention(q, ip_k, ip_v)
-        hidden_states = hidden_states + scale * ip_hidden_states
-        return hidden_states
+        self.use_xformers = use_xformers
 
-    def torch_forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None,
-                      qkv_preprocessor=None):
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-
-        batch_size = encoder_hidden_states.shape[0]
-
+    def sdpa_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
 
-        q = q.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-
-        if qkv_preprocessor is not None:
-            q, k, v = qkv_preprocessor(q, k, v)
+        q = rearrange(q, "b s (n d) -> b n s d", n=self.num_heads)
+        k = rearrange(k, "b s (n d) -> b n s d", n=self.num_heads)
+        v = rearrange(v, "b s (n d) -> b n s d", n=self.num_heads)
 
         hidden_states = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-        if ipadapter_kwargs is not None:
-            hidden_states = self.interact_with_ipadapter(hidden_states, q, **ipadapter_kwargs)
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
+        hidden_states = rearrange(hidden_states, "b n s d -> b s (n d)", n=self.num_heads)
         hidden_states = hidden_states.to(q.dtype)
-
         hidden_states = self.to_out(hidden_states)
-
         return hidden_states
 
-    def xformers_forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None):
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-
+    def xformers_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
+        import xformers.ops as xops
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
+        q = rearrange(q, "b s (n d) -> b s n d", n=self.num_heads)
+        k = rearrange(k, "b s (n d) -> b s n d", n=self.num_heads)
+        v = rearrange(v, "b s (n d) -> b s n d", n=self.num_heads)
 
-        q = rearrange(q, "b f (n d) -> (b n) f d", n=self.num_heads)
-        k = rearrange(k, "b f (n d) -> (b n) f d", n=self.num_heads)
-        v = rearrange(v, "b f (n d) -> (b n) f d", n=self.num_heads)
-
-        if attn_mask is not None:
-            hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask)
-        else:
-            import xformers.ops as xops
-            hidden_states = xops.memory_efficient_attention(q, k, v)
-        hidden_states = rearrange(hidden_states, "(b n) f d -> b f (n d)", n=self.num_heads)
-
+        hidden_states = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
+        hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
+        return hidden_states
+    
+    def original_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
+        q = self.to_q(hidden_states)
+        k = self.to_k(encoder_hidden_states)
+        v = self.to_v(encoder_hidden_states)
+        q = rearrange(q, "b s (n d) -> (b n) s d", n=self.num_heads)
+        k = rearrange(k, "b s (n d) -> (b n) s d", n=self.num_heads)
+        v = rearrange(v, "b s (n d) -> (b n) s d", n=self.num_heads)
 
+        hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask)
+        hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)
+        hidden_states = hidden_states.to(q.dtype)
+        hidden_states = self.to_out(hidden_states)
         return hidden_states
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attn_mask=None, ipadapter_kwargs=None,
-                qkv_preprocessor=None):
-        return self.torch_forward(hidden_states, encoder_hidden_states=encoder_hidden_states, attn_mask=attn_mask,
-                                  ipadapter_kwargs=ipadapter_kwargs, qkv_preprocessor=qkv_preprocessor)
+    def forward(self, 
+        hidden_states,
+        encoder_hidden_states=None,
+        attn_mask=None,
+    ):
+        if encoder_hidden_states is None:
+            encoder_hidden_states = hidden_states
+        if self.use_xformers:
+            return self.xformers_attn(hidden_states, encoder_hidden_states, attn_mask)
+        
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+            # 检查是否支持sdpa            
+            return self.sdpa_attn(hidden_states, encoder_hidden_states, attn_mask)
+        return self.original_attn(hidden_states, encoder_hidden_states, attn_mask)

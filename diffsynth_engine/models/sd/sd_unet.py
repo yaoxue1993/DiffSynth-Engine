@@ -790,7 +790,7 @@ class SDUNetStateDictConverter(StateDictConverter):
             logger.info("use civitai format state dict")
         elif "down_blocks.0.attentions.0.norm.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
-            logger.info("use diffsynth format state dict")
+            logger.info("use diffusers format state dict")
         else:
             logger.info("user diffsynth format state dict")
         return state_dict
