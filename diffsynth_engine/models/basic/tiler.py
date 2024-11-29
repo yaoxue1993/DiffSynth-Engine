@@ -190,7 +190,7 @@ class TileWorker2Dto3D:
             model_input,
             tile_size, tile_stride,
             tile_device="cpu", tile_dtype=torch.float32,
-            computation_device="cuda", computation_dtype=torch.float32,
+            computation_device='cuda:0', computation_dtype=torch.float32,
             border_width=None, scales=[1, 1, 1, 1],
             progress_bar=lambda x: x
     ):

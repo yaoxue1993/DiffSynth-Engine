@@ -128,7 +128,7 @@ class T5EncoderModel(PreTrainedModel):
             relative_attention_max_distance: int = 128,
             dropout_rate: float = 0.1,
             eps: float = 1e-6,
-            device: str = "cuda:0",
+            device: str = 'cuda:0',
             dtype: torch.dtype = torch.float16
     ):
         super().__init__()

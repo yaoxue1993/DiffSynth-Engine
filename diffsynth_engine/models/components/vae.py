@@ -306,7 +306,7 @@ class VAEStateDictConverter(StateDictConverter):
 
 class VAEAttentionBlock(nn.Module):
     def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, norm_num_groups=32, eps=1e-5,
-                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float32):
         super().__init__()
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -353,7 +353,7 @@ class VAEDecoder(PreTrainedModel):
                  shift_factor: float = 0,
                  use_post_quant_conv: bool = True,
                  device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16
+                 dtype: torch.dtype = torch.float32
                  ):
         super().__init__()
         self.scaling_factor = scaling_factor
@@ -436,12 +436,12 @@ class VAEDecoder(PreTrainedModel):
     @classmethod
     def from_state_dict(cls,
                         state_dict: Dict[str, torch.Tensor],
+                        device: str,
+                        dtype: torch.dtype,
                         latent_channels: int = 4,
                         scaling_factor: float = 0.18215,
                         shift_factor: float = 0,
                         use_post_quant_conv: bool = True,
-                        device: str = 'cuda:0',
-                        dtype: torch.dtype = torch.float16
                         ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
@@ -470,7 +470,7 @@ class VAEEncoder(PreTrainedModel):
                  shift_factor: float = 0,
                  use_quant_conv: bool = True,
                  device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16
+                 dtype: torch.dtype = torch.float32
                  ):
         super().__init__()
         self.scaling_factor = scaling_factor
@@ -565,12 +565,12 @@ class VAEEncoder(PreTrainedModel):
     @classmethod
     def from_state_dict(cls,
                         state_dict: Dict[str, torch.Tensor],
+                        device: str,
+                        dtype: torch.dtype,
                         latent_channels: int = 4,
                         scaling_factor: float = 0.18215,
                         shift_factor: float = 0,
                         use_quant_conv: bool = True,
-                        device: str = 'cuda:0',
-                        dtype: torch.dtype = torch.float16
                         ):
         model = torch.nn.utils.skip_init(
             cls,
@@ -599,7 +599,7 @@ class VAE(PreTrainedModel):
                  use_quant_conv: bool = True,
                  use_post_quant_conv: bool = True,
                  device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16
+                 dtype: torch.dtype = torch.float32
                  ):
         super().__init__()
         self.encoder = VAEEncoder(latent_channels=latent_channels, scaling_factor=scaling_factor,
@@ -617,13 +617,13 @@ class VAE(PreTrainedModel):
     @classmethod
     def from_state_dict(cls,
                         state_dict: Dict[str, torch.Tensor],
+                        device: str,
+                        dtype: torch.dtype,
                         latent_channels: int = 4,
                         scaling_factor: float = 0.18215,
                         shift_factor: float = 0,
                         use_quant_conv: bool = True,
                         use_post_quant_conv: bool = True,
-                        device: str = 'cuda:0',
-                        dtype: torch.dtype = torch.float16
                         ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(

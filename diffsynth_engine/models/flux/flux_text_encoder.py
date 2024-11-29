@@ -55,7 +55,7 @@ class FluxTextEncoder1StateDictConverter(StateDictConverter):
 class FluxTextEncoder1(SDTextEncoder):
     converter = FluxTextEncoder1StateDictConverter()
 
-    def __init__(self, vocab_size=49408, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
+    def __init__(self, vocab_size=49408, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
         super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
 
     def forward(self, input_ids, clip_skip=2):
@@ -79,7 +79,7 @@ class FluxTextEncoder1(SDTextEncoder):
 
 
 class FluxTextEncoder2(T5EncoderModel):
-    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
+    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
         super().__init__(
             embed_dim=4096,
             vocab_size=32128,

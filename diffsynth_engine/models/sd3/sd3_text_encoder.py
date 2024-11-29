@@ -270,8 +270,8 @@ class SD3TextEncoder1StateDictConverter(StateDictConverter):
 class SD3TextEncoder1(SDTextEncoder):
     converter = SD3TextEncoder1StateDictConverter()
 
-    def __init__(self, vocab_size=49408):
-        super().__init__(vocab_size=vocab_size)
+    def __init__(self, vocab_size=49408, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+        super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
 
     def forward(self, input_ids, clip_skip=2):
         embeds = self.token_embedding(input_ids) + self.position_embeds
@@ -283,6 +283,19 @@ class SD3TextEncoder1(SDTextEncoder):
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
         return pooled_embeds, hidden_states
+
+    @classmethod
+    def from_state_dict(
+            cls,
+            state_dict: Dict[str, torch.Tensor],
+            device: str,
+            dtype: torch.dtype,
+            vocab_size: int = 49408,
+    ):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
+        model.load_state_dict(state_dict)
+        return model
 
 
 class SD3TextEncoder2StateDictConverter(StateDictConverter):
@@ -861,7 +874,7 @@ class SD3TextEncoder2StateDictConverter(StateDictConverter):
 
 
 class SD3TextEncoder2(SDXLTextEncoder2):
-    converter = SD3TextEncoder2StateDictConverter
+    converter = SD3TextEncoder2StateDictConverter()
 
     def __init__(self):
         super().__init__()

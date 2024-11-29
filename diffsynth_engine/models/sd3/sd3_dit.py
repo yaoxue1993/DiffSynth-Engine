@@ -3,16 +3,17 @@ import torch.nn as nn
 from typing import Dict
 from einops import rearrange
 
-from diffsynth_engine.models.basic.timestep import TemporalTimesteps
+from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
+from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm
 from diffsynth_engine.models.basic.tiler import TileWorker
-from diffsynth_engine.models.base import PreTrainedModel
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
 
-class SD3DiTStateDictConverter:
+class SD3DiTStateDictConverter(StateDictConverter):
     def __init__(self):
         pass
 
@@ -780,13 +781,16 @@ class SD3DiTStateDictConverter:
 
 
 class PatchEmbed(nn.Module):
-    def __init__(self, patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192):
+    def __init__(self, patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192,
+                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
         self.pos_embed_max_size = pos_embed_max_size
         self.patch_size = patch_size
 
-        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=(patch_size, patch_size), stride=patch_size)
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.pos_embed_max_size, self.pos_embed_max_size, 1536))
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=(patch_size, patch_size), stride=patch_size,
+                              device=device, dtype=dtype)
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, self.pos_embed_max_size, self.pos_embed_max_size, 1536, device=device, dtype=dtype))
 
     def cropped_pos_embed(self, height, width):
         height = height // self.patch_size
@@ -804,52 +808,20 @@ class PatchEmbed(nn.Module):
         return latent + pos_embed
 
 
-class TimestepEmbeddings(nn.Module):
-    def __init__(self, dim_in, dim_out):
-        super().__init__()
-        self.time_proj = TemporalTimesteps(num_channels=dim_in, flip_sin_to_cos=True, downscale_freq_shift=0)
-        self.timestep_embedder = nn.Sequential(
-            nn.Linear(dim_in, dim_out), nn.SiLU(), nn.Linear(dim_out, dim_out)
-        )
-
-    def forward(self, timestep, dtype):
-        time_emb = self.time_proj(timestep).to(dtype)
-        time_emb = self.timestep_embedder(time_emb)
-        return time_emb
-
-
-class AdaLayerNorm(nn.Module):
-    def __init__(self, dim, single=False):
-        super().__init__()
-        self.single = single
-        self.linear = nn.Linear(dim, dim * (2 if single else 6))
-        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-
-    def forward(self, x, emb):
-        emb = self.linear(nn.functional.silu(emb))
-        if self.single:
-            scale, shift = emb.unsqueeze(1).chunk(2, dim=2)
-            x = self.norm(x) * (1 + scale) + shift
-            return x
-        else:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.unsqueeze(1).chunk(6, dim=2)
-            x = self.norm(x) * (1 + scale_msa) + shift_msa
-            return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
-
-
 class JointAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device: str = 'cuda:0',
+                 dtype: torch.dtype = torch.float16):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.only_out_a = only_out_a
 
-        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3)
-        self.b_to_qkv = nn.Linear(dim_b, dim_b * 3)
+        self.a_to_qkv = nn.Linear(dim_a, dim_a * 3, device=device, dtype=dtype)
+        self.b_to_qkv = nn.Linear(dim_b, dim_b * 3, device=device, dtype=dtype)
 
-        self.a_to_out = nn.Linear(dim_a, dim_a)
+        self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         if not only_out_a:
-            self.b_to_out = nn.Linear(dim_b, dim_b)
+            self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
 
     def forward(self, hidden_states_a, hidden_states_b):
         batch_size = hidden_states_a.shape[0]
@@ -872,25 +844,26 @@ class JointAttention(nn.Module):
 
 
 class JointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads):
+    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.norm1_a = AdaLayerNorm(dim)
-        self.norm1_b = AdaLayerNorm(dim)
+        self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
+        self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
-        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads)
+        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads,
+                                   device=device, dtype=dtype)
 
-        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
 
-        self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
 
     def forward(self, hidden_states_a, hidden_states_b, temb):
@@ -914,18 +887,19 @@ class JointTransformerBlock(nn.Module):
 
 
 class JointTransformerFinalBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads):
+    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.norm1_a = AdaLayerNorm(dim)
-        self.norm1_b = AdaLayerNorm(dim, single=True)
+        self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
+        self.norm1_b = AdaLayerNorm(dim, single=True, device=device, dtype=dtype)
 
-        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads, only_out_a=True)
+        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads, only_out_a=True,
+                                   device=device, dtype=dtype)
 
-        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
 
     def forward(self, hidden_states_a, hidden_states_b, temb):
@@ -946,17 +920,19 @@ class JointTransformerFinalBlock(nn.Module):
 class SD3DiT(PreTrainedModel):
     converter = SD3DiTStateDictConverter()
 
-    def __init__(self):
+    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.pos_embedder = PatchEmbed(patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192)
-        self.time_embedder = TimestepEmbeddings(256, 1536)
-        self.pooled_text_embedder = nn.Sequential(nn.Linear(2048, 1536), nn.SiLU(),
-                                                  nn.Linear(1536, 1536))
-        self.context_embedder = nn.Linear(4096, 1536)
+        self.pos_embedder = PatchEmbed(patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192, device=device, dtype=dtype)
+        self.time_embedder = TimestepEmbeddings(256, 1536, device=device, dtype=dtype)
+        self.pooled_text_embedder = nn.Sequential(nn.Linear(2048, 1536, device=device, dtype=dtype),
+                                                  nn.SiLU(),
+                                                  nn.Linear(1536, 1536, device=device, dtype=dtype))
+        self.context_embedder = nn.Linear(4096, 1536, device=device, dtype=dtype)
         self.blocks = nn.ModuleList(
-            [JointTransformerBlock(1536, 24) for _ in range(23)] + [JointTransformerFinalBlock(1536, 24)])
-        self.norm_out = AdaLayerNorm(1536, single=True)
-        self.proj_out = nn.Linear(1536, 64)
+            [JointTransformerBlock(1536, 24, device=device, dtype=dtype) for _ in range(23)] + \
+            [JointTransformerFinalBlock(1536, 24, device=device, dtype=dtype)])
+        self.norm_out = AdaLayerNorm(1536, single=True, device=device, dtype=dtype)
+        self.proj_out = nn.Linear(1536, 64, device=device, dtype=dtype)
 
     def tiled_forward(self, hidden_states, timestep, prompt_emb, pooled_prompt_emb, tile_size=128, tile_stride=64):
         # Due to the global positional embedding, we cannot implement layer-wise tiled forward.

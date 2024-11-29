@@ -1798,7 +1798,7 @@ class SDXLUNet(PreTrainedModel):
 
     def __init__(self,
                  is_kolors: bool = False,
-                 device: str = "cuda:0",
+                 device: str = 'cuda:0',
                  dtype: torch.dtype = torch.float16
                  ):
         super().__init__()
