@@ -58,18 +58,16 @@ class T5EncoderLayer(nn.Module):
             self,
             hidden_states,
             attention_mask=None,
-            position_bias=None
     ):
         # Self Attention
         attn_output = self.attn(
             self.attn_norm(hidden_states),
-            mask=attention_mask,
-            position_bias=position_bias
+            mask=attention_mask
         )
         hidden_states = hidden_states + self.dropout(attn_output)
         # Apply Feed Forward layer
         hidden_states = hidden_states + self.dropout(self.ffn_norm(self.feed_forward(hidden_states)))
-        return hidden_states, position_bias
+        return hidden_states
 
 
 class T5EncoderModelStateDictConverter(StateDictConverter):
@@ -160,7 +158,7 @@ class T5EncoderModel(PreTrainedModel):
 
         # dropout
         self.dropout = nn.Dropout(dropout_rate)
-
+    
     def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.FloatTensor] = None):
         inputs_embeds = self.token_embedding(input_ids)
         hidden_states = self.dropout(inputs_embeds)

@@ -223,9 +223,9 @@ class FluxJointAttention(nn.Module):
         self.norm_q_b = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
         self.norm_k_b = RMSNorm(head_dim, eps=1e-6, device=device, dtype=dtype)
 
-        self.a_to_out = nn.Linear(dim_a, dim_a)
+        self.a_to_out = nn.Linear(dim_a, dim_a, device=device, dtype=dtype)
         if not only_out_a:
-            self.b_to_out = nn.Linear(dim_b, dim_b)
+            self.b_to_out = nn.Linear(dim_b, dim_b, device=device, dtype=dtype)
 
     def apply_rope(self, xq, xk, freqs_cis):
         xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
