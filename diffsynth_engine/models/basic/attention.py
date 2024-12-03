@@ -64,7 +64,7 @@ class Attention(nn.Module):
         v = rearrange(v, "b s (n d) -> b s n d", n=self.num_heads)
 
         hidden_states = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
-        hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)
+        hidden_states = rearrange(hidden_states, "b s n d -> b s (n d)")
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
         return hidden_states

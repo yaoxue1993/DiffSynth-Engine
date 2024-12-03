@@ -275,7 +275,7 @@ class VAEStateDictConverter(StateDictConverter):
         new_state_dict = {}
         for key, param in state_dict.items():
             if key not in rename_dict:
-                raise ValueError(f"Key {key} not found in rename_dict")
+                continue
             new_key = rename_dict[key]
             if "transformer_blocks" in new_key:
                 param = param.squeeze()
@@ -321,6 +321,7 @@ class VAEAttentionBlock(nn.Module):
                 bias_q=True,
                 bias_kv=True,
                 bias_out=True,
+                use_xformers=True,
                 device=device,
                 dtype=dtype
             )
@@ -356,6 +357,7 @@ class VAEDecoder(PreTrainedModel):
                  dtype: torch.dtype = torch.float32
                  ):
         super().__init__()
+        self.latent_channels = latent_channels
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_post_quant_conv = use_post_quant_conv
@@ -373,17 +375,17 @@ class VAEDecoder(PreTrainedModel):
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(512),
+            UpSampler(512, device=device, dtype=dtype),
             # UpDecoderBlock2D
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(512),
+            UpSampler(512, device=device, dtype=dtype),
             # UpDecoderBlock2D
             ResnetBlock(512, 256, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(256),
+            UpSampler(256, device=device, dtype=dtype),
             # UpDecoderBlock2D
             ResnetBlock(256, 128, eps=1e-6, device=device, dtype=dtype),
             ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
@@ -473,6 +475,7 @@ class VAEEncoder(PreTrainedModel):
                  dtype: torch.dtype = torch.float32
                  ):
         super().__init__()
+        self.latent_channels = latent_channels
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_quant_conv = use_quant_conv
@@ -572,15 +575,16 @@ class VAEEncoder(PreTrainedModel):
                         shift_factor: float = 0,
                         use_quant_conv: bool = True,
                         ):
-        model = torch.nn.utils.skip_init(
-            cls,
-            latent_channels=latent_channels,
-            scaling_factor=scaling_factor,
-            shift_factor=shift_factor,
-            use_quant_conv=use_quant_conv,
-            device=device,
-            dtype=dtype
-        )
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(
+                cls,
+                latent_channels=latent_channels,
+                scaling_factor=scaling_factor,
+                shift_factor=shift_factor,
+                use_quant_conv=use_quant_conv,
+                device=device,
+                dtype=dtype
+            )
         model.load_state_dict(state_dict)
         return model
 
