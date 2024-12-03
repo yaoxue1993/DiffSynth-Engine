@@ -22,14 +22,18 @@ class DDPMSampler(EpsilonSampler):
         return mu
 
     def step(self, latents, model_outputs, i):
-        # COMMENT: 这个实现感觉有点问题，需要讨论一下
         sigma = self.sigmas[i]
         sigma_next = self.sigmas[i + 1]
         latents = self._scaling(sigma, latents)
 
         denoised = self._to_denoised(sigma, model_outputs, latents)
         latents = self._step_function(latents / (1.0 + sigma ** 2.0) ** 0.5, sigma, sigma_next, (latents - denoised) / sigma)
-        if sigma_next > 0:
-            latents *= (1.0 + sigma_next ** 2.0) ** 0.5
+
+        latents *= (1.0 + sigma_next ** 2.0) ** 0.5
 
         return self._unscaling(self.sigmas[i + 1], latents)
+    
+
+    def step2(self, latents, model_outputs, i):
+        return self._step_function(latents, self.sigmas[i], self.sigmas[i + 1], model_outputs)
+
