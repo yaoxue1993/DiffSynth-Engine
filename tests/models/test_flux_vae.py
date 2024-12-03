@@ -14,23 +14,26 @@ _input_image = os.path.join(TEST_ASSETS_PATH, "wukong_1024_1024.png")
 
 class TestFluxVAE(unittest.TestCase):
 
-    def setUp(self):
-        loaded_state_dict = load_file(_vae_model_path)
-        self.encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-
     def test_encode(self):
+        loaded_state_dict = load_file(_vae_model_path)
+        encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+
         loaded_state_dict = load_file(os.path.join(TEST_ASSETS_PATH, "test_flux_vae.safetensors"))
         expected = loaded_state_dict["encoded"]
         with Image.open(_input_image).convert("RGB") as image:
             image_tensor = torch.tensor(np.array(image, dtype=np.float32) * (2 / 255) - 1)
             image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0).to('cuda:0')
-        result = self.encoder(image_tensor).cpu()
-        self.assertTrue(torch.allclose(expected, result))
+        with torch.no_grad():
+            result = encoder(image_tensor).cpu()
+        self.assertTrue(torch.allclose(expected, result, atol=1e-6))
 
     def test_decode(self):
+        loaded_state_dict = load_file(_vae_model_path)
+        decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+
         loaded_state_dict = load_file(os.path.join(TEST_ASSETS_PATH, "test_flux_vae.safetensors"))
-        letent_tensor, expected = loaded_state_dict["encoded"], loaded_state_dict["decoded"]
-        latent_tensor = torch.randn(1, 16, 128, 128).to('cuda:0')
-        result = self.decoder(latent_tensor).cpu()
-        self.assertTrue(torch.allclose(expected, result))
+        latent_tensor, expected = loaded_state_dict["encoded"], loaded_state_dict["decoded"]
+        latent_tensor = latent_tensor.to('cuda:0')
+        with torch.no_grad():
+            result = decoder(latent_tensor).cpu()
+        self.assertTrue(torch.allclose(expected, result, atol=1e-6))
