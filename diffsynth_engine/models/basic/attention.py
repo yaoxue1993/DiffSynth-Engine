@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from einops import rearrange
+from einops import rearrange, repeat
 
 
-def low_version_attention(query, key, value, attn_bias=None):
-    scale = 1 / query.shape[-1] ** 0.5
+def low_version_attention(query, key, value, attn_bias=None, scale=None):
+    scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
     query = query * scale
     attn = torch.matmul(query, key.transpose(-2, -1))
     if attn_bias is not None:
@@ -22,6 +22,7 @@ class Attention(nn.Module):
                  bias_q=False,
                  bias_kv=False,
                  bias_out=False,
+                 scale=None,
                  use_xformers=False,
                  device: str = 'cuda:0',
                  dtype: torch.dtype = torch.float16
@@ -37,6 +38,7 @@ class Attention(nn.Module):
         self.to_v = nn.Linear(kv_dim, dim_inner, bias=bias_kv, device=device, dtype=dtype)
         self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out, device=device, dtype=dtype)
 
+        self.scale = scale
         self.use_xformers = use_xformers
 
     def sdpa_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
@@ -48,7 +50,7 @@ class Attention(nn.Module):
         k = rearrange(k, "b s (n d) -> b n s d", n=self.num_heads)
         v = rearrange(v, "b s (n d) -> b n s d", n=self.num_heads)
 
-        hidden_states = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        hidden_states = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, scale=self.scale)
         hidden_states = rearrange(hidden_states, "b n s d -> b s (n d)", n=self.num_heads)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
@@ -56,6 +58,7 @@ class Attention(nn.Module):
 
     def xformers_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         import xformers.ops as xops
+        bs = hidden_states.shape[0]
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
@@ -63,19 +66,26 @@ class Attention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=self.num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=self.num_heads)
 
-        hidden_states = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask)
+        if attn_mask is not None:
+            attn_mask = repeat(attn_mask, "1 ... -> b ...", b=bs)
+
+        hidden_states = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=self.scale)
         hidden_states = rearrange(hidden_states, "b s n d -> b s (n d)")
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
         return hidden_states
 
     def original_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
+        bs = hidden_states.shape[0]
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
         q = rearrange(q, "b s (n d) -> (b n) s d", n=self.num_heads)
         k = rearrange(k, "b s (n d) -> (b n) s d", n=self.num_heads)
         v = rearrange(v, "b s (n d) -> (b n) s d", n=self.num_heads)
+
+        if attn_mask is not None:
+            attn_mask = repeat(attn_mask, "1 n ... -> (b n) ...", b=bs)
 
         hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask)
         hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)

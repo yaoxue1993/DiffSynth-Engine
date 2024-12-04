@@ -46,6 +46,7 @@ class T5EncoderLayer(nn.Module):
             q_dim=embed_dim,
             num_heads=num_heads,
             head_dim=head_dim,
+            scale=1.0,
             device=device,
             dtype=dtype
         )
@@ -62,11 +63,11 @@ class T5EncoderLayer(nn.Module):
         # Self Attention
         attn_output = self.attn(
             self.attn_norm(hidden_states),
-            mask=attention_mask
+            attn_mask=attention_mask,
         )
         hidden_states = hidden_states + self.dropout(attn_output)
-        # Apply Feed Forward layer
-        hidden_states = hidden_states + self.dropout(self.ffn_norm(self.feed_forward(hidden_states)))
+        # Feed Forward
+        hidden_states = hidden_states + self.dropout(self.feed_forward(self.ffn_norm(hidden_states)))
         return hidden_states
 
 
@@ -75,6 +76,7 @@ class T5EncoderModelStateDictConverter(StateDictConverter):
         rename_dict = {
             "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": "relative_position_embedding.relative_attention_bias.weight",
             "encoder.final_layer_norm.weight": "final_layer_norm.weight",
+            "encoder.embed_tokens.weight": "token_embedding.weight",
             "shared.weight": "token_embedding.weight",
         }
 
@@ -154,7 +156,7 @@ class T5EncoderModel(PreTrainedModel):
         ])
 
         # final_layer_norm
-        self.final_layer_norm = nn.LayerNorm(embed_dim, device=device, dtype=dtype, bias=False)
+        self.final_layer_norm = RMSNorm(embed_dim, eps=eps, device=device, dtype=dtype)
 
         # dropout
         self.dropout = nn.Dropout(dropout_rate)
