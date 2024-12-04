@@ -1,4 +1,4 @@
-from diffsynth_engine.algorithm.sampler.base import EpsilonSampler
+from diffsynth_engine.algorithm.sampler.base_sampler import EpsilonSampler
 
 class DPMSolverPlusPlus2MSampler(EpsilonSampler):
     """

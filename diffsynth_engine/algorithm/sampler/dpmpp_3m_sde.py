@@ -1,4 +1,4 @@
-from diffsynth_engine.algorithm.sampler.base import EpsilonSampler
+from diffsynth_engine.algorithm.sampler.base_sampler import EpsilonSampler
 from diffsynth_engine.algorithm.sampler.brownian_tree import BrownianTreeNoiseSampler
 import torch
 class DPMSolverPlusPlus3MSDESampler(EpsilonSampler):
