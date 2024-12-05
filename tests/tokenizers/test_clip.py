@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from diffsynth_engine.tokenizers.clip import CLIPTokenizer
-from diffsynth_engine.constants import FLUX_TOKENIZER_1_CONF_PATH
+from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH
 
 
 class TestCLIPTokenizer(unittest.TestCase):

@@ -10,7 +10,7 @@ from diffsynth_engine.models.basic.tiler import FastTileWorker
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.schedulers import FlowMatchScheduler
-from diffsynth_engine.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 
 
 class FluxImagePipeline(BasePipeline):

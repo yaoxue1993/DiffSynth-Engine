@@ -13,7 +13,7 @@ from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.schedulers import EnhancedDDIMScheduler
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
-from diffsynth_engine.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
 
 logger = logging.get_logger(__name__)
 

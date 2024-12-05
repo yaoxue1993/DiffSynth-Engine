@@ -6,9 +6,10 @@ from safetensors.torch import load_file
 from PIL import Image
 
 from diffsynth_engine.models.sdxl import SDXLVAEEncoder, SDXLVAEDecoder
-from diffsynth_engine.constants import MODEL_CACHE_PATH, TEST_ASSETS_PATH
+from diffsynth_engine.utils.env import DIFFSYNTH_CACHE
+from diffsynth_engine.utils.constants import TEST_ASSETS_PATH
 
-_sdxl_model_path = os.path.join(MODEL_CACHE_PATH, "sdxl", "sd_xl_base_1.0.safetensors")
+_sdxl_model_path = os.path.join(DIFFSYNTH_CACHE, "sdxl", "sd_xl_base_1.0.safetensors")
 _input_image = os.path.join(TEST_ASSETS_PATH, "wukong_1024_1024.png")
 
 

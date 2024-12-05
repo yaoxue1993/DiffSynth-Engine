@@ -6,9 +6,10 @@ from safetensors.torch import load_file
 from PIL import Image
 
 from diffsynth_engine.models.flux import FluxVAEEncoder, FluxVAEDecoder
-from diffsynth_engine.constants import MODEL_CACHE_PATH, TEST_ASSETS_PATH
+from diffsynth_engine.utils.env import DIFFSYNTH_CACHE
+from diffsynth_engine.utils.constants import TEST_ASSETS_PATH
 
-_vae_model_path = os.path.join(MODEL_CACHE_PATH, "flux.1-dev", "ae.safetensors")
+_vae_model_path = os.path.join(DIFFSYNTH_CACHE, "flux.1-dev", "ae.safetensors")
 _input_image = os.path.join(TEST_ASSETS_PATH, "wukong_1024_1024.png")
 
 

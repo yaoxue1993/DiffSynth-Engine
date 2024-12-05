@@ -2,7 +2,7 @@ import unittest
 import torch
 
 from diffsynth_engine.tokenizers.t5 import T5TokenizerFast
-from diffsynth_engine.constants import FLUX_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.constants import FLUX_TOKENIZER_2_CONF_PATH
 
 
 class TestT5TokenizerFast(unittest.TestCase):

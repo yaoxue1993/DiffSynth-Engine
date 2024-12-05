@@ -6,9 +6,9 @@ from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.relative_position_emb import RelativePositionEmbedding
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm, NewGELUActivation
 from diffsynth_engine.models.basic.attention import Attention
-import logging
+from diffsynth_engine.utils import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 
 class T5FeedForward(nn.Module):
@@ -160,7 +160,7 @@ class T5EncoderModel(PreTrainedModel):
 
         # dropout
         self.dropout = nn.Dropout(dropout_rate)
-    
+
     def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.FloatTensor] = None):
         inputs_embeds = self.token_embedding(input_ids)
         hidden_states = self.dropout(inputs_embeds)
