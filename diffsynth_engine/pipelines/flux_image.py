@@ -5,9 +5,8 @@ from types import ModuleType
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.models import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
+from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
 from diffsynth_engine.models.basic.tiler import FastTileWorker
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.schedulers import FlowMatchScheduler
@@ -16,26 +15,60 @@ from diffsynth_engine.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZE
 
 class FluxImagePipeline(BasePipeline):
 
-    def __init__(self, device="cuda", torch_dtype=torch.float16):
+    def __init__(self,
+                 tokenizer: CLIPTokenizer,
+                 tokenizer_2: T5TokenizerFast,
+                 text_encoder_1: FluxTextEncoder1,
+                 text_encoder_2: FluxTextEncoder2,
+                 dit: FluxDiT,
+                 vae_decoder: FluxVAEDecoder,
+                 vae_encoder: FluxVAEEncoder,
+                 device: str = "cuda",
+                 torch_dtype: torch.dtype = torch.float16):
         super().__init__(device=device, torch_dtype=torch_dtype)
         self.scheduler = FlowMatchScheduler()
         # models
-        with no_init_weights():
-            self.tokenizer_1: CLIPTokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
-            self.tokenizer_2: T5TokenizerFast = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
-            self.text_encoder_1: FluxTextEncoder1 = FluxTextEncoder1()
-            self.text_encoder_2: FluxTextEncoder2 = FluxTextEncoder2()
-            self.dit: FluxDiT = FluxDiT()
-            self.vae_decoder: FluxVAEDecoder = FluxVAEDecoder()
-            self.vae_encoder: FluxVAEEncoder = FluxVAEEncoder()
-            self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+        self.text_encoder_1 = text_encoder_1
+        self.text_encoder_2 = text_encoder_2
+        self.dit = dit
+        self.vae_decoder = vae_decoder
+        self.vae_encoder = vae_encoder
+        self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike]):
-        raise NotImplementedError()
+    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "FluxImagePipeline":
+        assert os.path.isfile(pretrained_model_path) and pretrained_model_path.endswith(".safetensors"), \
+            "pretrained_model_path must be a .safetensors file"
+        logger.info(f"initialing {cls.__name__} from {pretrained_model_path} ...")
+        loaded_state_dict = load_file(pretrained_model_path, device="cpu")
+
+        tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+        tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
+        text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        dit = FluxDiT.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        vae_decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device=device, dtype=torch.float32)
+        vae_encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device=device, dtype=torch.float32)
+
+        pipe = cls(
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            text_encoder_1=text_encoder_1,
+            text_encoder_2=text_encoder_2,
+            dit=dit,
+            vae_decoder=vae_decoder,
+            vae_encoder=vae_encoder,
+            device=device,
+            torch_dtype=torch_dtype,
+        )
+        return pipe
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"]):
+    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "FluxImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):
@@ -56,7 +89,8 @@ class FluxImagePipeline(BasePipeline):
         input_ids = self.tokenizer_2(prompt, max_length=t5_sequence_length)["input_ids"].to(device=self.device)
         prompt_emb = self.text_encoder_2(input_ids)
 
-        text_ids = torch.zeros(prompt_emb.shape[0], prompt_emb.shape[1], 3).to(device=self.device, dtype=prompt_emb.dtype)
+        text_ids = torch.zeros(prompt_emb.shape[0], prompt_emb.shape[1], 3).to(device=self.device,
+                                                                               dtype=prompt_emb.dtype)
         return {"prompt_emb": prompt_emb, "pooled_prompt_emb": pooled_prompt_emb, "text_ids": text_ids}
 
     def prepare_extra_input(self, latents=None, guidance=1.0):
@@ -75,7 +109,7 @@ class FluxImagePipeline(BasePipeline):
                       tiled: bool = False,
                       tile_size: int = 128,
                       tile_stride: int = 64,
-    ):
+                      ):
         if tiled:
             def flux_forward_fn(hl, hr, wl, wr):
                 return self.predict_noise(
@@ -88,6 +122,7 @@ class FluxImagePipeline(BasePipeline):
                     image_ids=None,
                     tiled=False,
                 )
+
             return FastTileWorker().tiled_forward(
                 flux_forward_fn,
                 hidden_states,
@@ -100,7 +135,8 @@ class FluxImagePipeline(BasePipeline):
         if image_ids is None:
             image_ids = self.dit.prepare_image_ids(hidden_states)
 
-        conditioning = self.dit.time_embedder(timestep, hidden_states.dtype) + self.dit.pooled_text_embedder(pooled_prompt_emb)
+        conditioning = self.dit.time_embedder(timestep, hidden_states.dtype) + self.dit.pooled_text_embedder(
+            pooled_prompt_emb)
         if self.dit.guidance_embedder is not None:
             guidance = guidance * 1000
             conditioning = conditioning + self.dit.guidance_embedder(guidance, hidden_states.dtype)
@@ -138,8 +174,8 @@ class FluxImagePipeline(BasePipeline):
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
-            num_inference_steps:int = 30,
-            t5_sequence_length:int = 512,
+            num_inference_steps: int = 30,
+            t5_sequence_length: int = 512,
             tiled: bool = False,
             tile_size: int = 128,
             tile_stride: int = 64,
@@ -164,10 +200,12 @@ class FluxImagePipeline(BasePipeline):
             self.load_models_to_device(['vae_encoder'])
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.torch_dtype)
             latents = self.encode_image(image, **tiler_kwargs)
-            noise = self.generate_noise((1, 16, height//8, width//8), seed=seed, device=self.device, dtype=self.torch_dtype)
+            noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device=self.device,
+                                        dtype=self.torch_dtype)
             latents = self.scheduler.add_noise(latents, noise, timestep=self.scheduler.timesteps[0])
         else:
-            latents = self.generate_noise((1, 16, height//8, width//8), seed=seed, device=self.device, dtype=self.torch_dtype)
+            latents = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device=self.device,
+                                          dtype=self.torch_dtype)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder_1', 'text_encoder_2'])

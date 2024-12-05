@@ -1,12 +1,15 @@
 import os
 import torch
-import torch.nn as nn
 import numpy as np
 from typing import List, Dict, Union, Optional
 from PIL import Image
 
+from diffsynth_engine.utils import logging
 
-class BasePipeline(nn.Module):
+logger = logging.get_logger(__name__)
+
+
+class BasePipeline:
 
     def __init__(self, device="cuda", torch_dtype=torch.float16):
         super().__init__()
@@ -16,11 +19,13 @@ class BasePipeline(nn.Module):
         self.model_names = []
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike]):
+    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "BasePipeline":
         raise NotImplementedError()
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"]):
+    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "BasePipeline":
         raise NotImplementedError()
 
     @staticmethod
@@ -44,10 +49,16 @@ class BasePipeline(nn.Module):
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
 
+    def eval(self):
+        for model_name in self.model_names:
+            model = getattr(self, model_name)
+            if model is not None:
+                model.eval()
+
     def enable_cpu_offload(self):
         self.cpu_offload = True
 
-    def load_models_to_device(self, load_model_names: Optional[List[str]]=None):
+    def load_models_to_device(self, load_model_names: Optional[List[str]] = None):
         load_model_names = load_model_names if load_model_names else []
         # only load models to device if cpu_offload is enabled
         if not self.cpu_offload:

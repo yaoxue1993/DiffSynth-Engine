@@ -2,42 +2,79 @@ import os
 import torch
 from typing import Callable, Dict, Union, Optional
 from types import ModuleType
+from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.models import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
+from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
 from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
-from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.schedulers import EnhancedDDIMScheduler
+from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
+
+logger = logging.get_logger(__name__)
 
 
 # TODO: add controlnet/ipadapter/kolors
 class SDXLImagePipeline(BasePipeline):
 
-    def __init__(self, device="cuda", torch_dtype=torch.float16):
+    def __init__(self,
+                 tokenizer: CLIPTokenizer,
+                 tokenizer_2: CLIPTokenizer,
+                 text_encoder: SDXLTextEncoder,
+                 text_encoder_2: SDXLTextEncoder2,
+                 unet: SDXLUNet,
+                 vae_decoder: SDXLVAEDecoder,
+                 vae_encoder: SDXLVAEEncoder,
+                 device: str = "cuda",
+                 torch_dtype: torch.dtype = torch.float16):
         super().__init__(device=device, torch_dtype=torch_dtype)
         self.scheduler = EnhancedDDIMScheduler()
         # models
-        with no_init_weights():
-            self.tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
-            self.tokenizer_2: CLIPTokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
-            self.text_encoder: SDXLTextEncoder = SDXLTextEncoder()
-            self.text_encoder_2: SDXLTextEncoder2 = SDXLTextEncoder2()
-            self.unet: SDXLUNet = SDXLUNet()
-            self.vae_decoder: SDXLVAEDecoder = SDXLVAEDecoder()
-            self.vae_encoder: SDXLVAEEncoder = SDXLVAEEncoder()
-            self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
+        self.tokenizer = tokenizer
+        self.tokenizer_2 = tokenizer_2
+        self.text_encoder = text_encoder
+        self.text_encoder_2 = text_encoder_2
+        self.unet = unet
+        self.vae_decoder = vae_decoder
+        self.vae_encoder = vae_encoder
+        self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike]):
-        raise NotImplementedError()
+    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "SDXLImagePipeline":
+        assert os.path.isfile(pretrained_model_path) and pretrained_model_path.endswith(".safetensors"), \
+            "pretrained_model_path must be a .safetensors file"
+        logger.info(f"initialing {cls.__name__} from {pretrained_model_path} ...")
+        loaded_state_dict = load_file(pretrained_model_path, device="cpu")
+
+        tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
+        tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
+        text_encoder = SDXLTextEncoder.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        unet = SDXLUNet.from_state_dict(loaded_state_dict, device=device, dtype=torch_dtype)
+        vae_decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device=device, dtype=torch.float32)
+        vae_encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device=device, dtype=torch.float32)
+
+        pipe = cls(
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            text_encoder=text_encoder,
+            text_encoder_2=text_encoder_2,
+            unet=unet,
+            vae_decoder=vae_decoder,
+            vae_encoder=vae_encoder,
+            device=device,
+            torch_dtype=torch_dtype,
+        )
+        return pipe
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"]):
+    def from_state_dict(cls, state_dict: Dict[str, "torch.Tensor"],
+                        device: str = "cuda", torch_dtype: torch.dtype = torch.float16) -> "SDXLImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):
@@ -67,7 +104,7 @@ class SDXLImagePipeline(BasePipeline):
 
         # For very long prompt, we only use the first 77 tokens to compute `add_text_embeds`.
         add_text_embeds = add_text_embeds[0:1]
-        prompt_emb = prompt_emb.reshape((1, prompt_emb.shape[0]*prompt_emb.shape[1], -1))
+        prompt_emb = prompt_emb.reshape((1, prompt_emb.shape[0] * prompt_emb.shape[1], -1))
 
         return {"encoder_hidden_states": prompt_emb, "add_text_embeds": add_text_embeds}
 
@@ -87,8 +124,8 @@ class SDXLImagePipeline(BasePipeline):
                       tile_size: int = 64,
                       tile_stride: int = 32,
                       device: str = "cuda",
-                      vram_limit_level: int = 0, # TODO: define enum
-    ) -> "torch.Tensor":
+                      vram_limit_level: int = 0,  # TODO: define enum
+                      ) -> "torch.Tensor":
         # 1. time
         t_emb = self.unet.time_proj(timestep).to(sample.dtype)
         t_emb = self.unet.time_embedding(t_emb)
@@ -103,7 +140,8 @@ class SDXLImagePipeline(BasePipeline):
 
         # 2. pre-process
         hidden_states = self.unet.conv_in(sample)
-        text_emb = encoder_hidden_states if self.unet.text_intermediate_proj is None else self.unet.text_intermediate_proj(encoder_hidden_states)
+        text_emb = encoder_hidden_states if self.unet.text_intermediate_proj is None else \
+            self.unet.text_intermediate_proj(encoder_hidden_states)
         res_stack = [hidden_states]
 
         # 3. blocks
@@ -175,10 +213,12 @@ class SDXLImagePipeline(BasePipeline):
             self.load_models_to_device(['vae_encoder'])
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.torch_dtype)
             latents = self.encode_image(image, **tiler_kwargs)
-            noise = self.generate_noise((1, 4, height//8, width//8), seed=seed, device=self.device, dtype=self.torch_dtype)
+            noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
+                                        dtype=self.torch_dtype)
             latents = self.scheduler.add_noise(latents, noise, timestep=self.scheduler.timesteps[0])
         else:
-            latents = self.generate_noise((1, 4, height//8, width//8), seed=seed, device=self.device, dtype=self.torch_dtype)
+            latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
+                                          dtype=self.torch_dtype)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
