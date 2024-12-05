@@ -1,7 +1,7 @@
 import os
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGE_ROOT = os.path.dirname(os.path.abspath(__file__))
+PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(PACKAGE_ROOT)
 
 # conf
 CONF_PATH = os.path.join(PACKAGE_ROOT, "conf")

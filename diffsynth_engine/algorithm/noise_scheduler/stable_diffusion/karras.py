@@ -1,6 +1,8 @@
 import torch
+
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
-from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion import StableDiffusionScheduler
+from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.stable_diffusion import StableDiffusionScheduler
+
 
 class KarrasScheduler(StableDiffusionScheduler):
     def __init__(self):
@@ -14,6 +16,6 @@ class KarrasScheduler(StableDiffusionScheduler):
         min_inv_rho = self.sigma_min ** (1 / self.rho)
         max_inv_rho = self.sigma_max ** (1 / self.rho)
         sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** self.rho
-        timesteps = self.sigma_to_t(sigmas)        
-        sigmas = append_zero(sigmas).to(self.device)        
+        timesteps = self.sigma_to_t(sigmas)
+        sigmas = append_zero(sigmas).to(self.device)
         return sigmas, timesteps

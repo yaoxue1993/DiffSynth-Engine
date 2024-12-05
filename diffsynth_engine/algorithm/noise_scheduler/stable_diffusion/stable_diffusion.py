@@ -1,11 +1,14 @@
-import math
 import torch
+
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero, BaseScheduler
+
+
 def linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, num_train_steps: int = 1000):
     """
     DDPM Schedule
     """
     return torch.linspace(beta_start, beta_end, num_train_steps)
+
 
 def scaled_linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, num_train_steps: int = 1000):
     """ 
@@ -34,12 +37,13 @@ class StableDiffusionScheduler(BaseScheduler):
     def get_sigmas(self):
         # Stable Diffusion Sigmas
         # len(sigmas) == 1000, sigma_min=sigmas[0] == 0.0292, sigma_max=sigmas[-1] == 14.6146                
-        betas = scaled_linear_beta_schedule(beta_start=self.beta_start, beta_end=self.beta_end, num_train_steps=self.num_train_steps)  
+        betas = scaled_linear_beta_schedule(beta_start=self.beta_start, beta_end=self.beta_end,
+                                            num_train_steps=self.num_train_steps)
         alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)        
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
         sigmas = ((1 - alphas_cumprod) / alphas_cumprod) ** 0.5
-        return sigmas 
-    
+        return sigmas
+
     def sigma_to_t(self, sigma):
         """
         找到sigma.log()在self.log_sigmas中的位置(low和high), 进行加权插值得到t
@@ -62,7 +66,7 @@ class StableDiffusionScheduler(BaseScheduler):
         low_idx, high_idx, w = t.floor().long(), t.ceil().long(), t.frac()
         log_sigma = (1 - w) * self.log_sigmas[low_idx] + w * self.log_sigmas[high_idx]
         return log_sigma.exp()
-    
+
     def schedule(self, num_inference_steps: int):
         timesteps = torch.linspace(self.num_train_steps - 1, 0, num_inference_steps, device=self.sigmas.device)
         sigmas = append_zero(self.t_to_sigma(timesteps))

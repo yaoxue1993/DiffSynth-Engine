@@ -72,6 +72,9 @@ class T5EncoderLayer(nn.Module):
 
 
 class T5EncoderModelStateDictConverter(StateDictConverter):
+    def __init__(self, num_encoder_layers: int = 24):
+        self.num_encoder_layers = num_encoder_layers
+
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         rename_dict = {
             "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": "relative_position_embedding.relative_attention_bias.weight",
@@ -80,29 +83,23 @@ class T5EncoderModelStateDictConverter(StateDictConverter):
             "shared.weight": "token_embedding.weight",
         }
 
-        module_rename_dict = {
-            "layer.0.SelfAttention.q.weight": "attn.to_q.weight",
-            "layer.0.SelfAttention.k.weight": "attn.to_k.weight",
-            "layer.0.SelfAttention.v.weight": "attn.to_v.weight",
-            "layer.0.SelfAttention.o.weight": "attn.to_out.weight",
-            "layer.0.layer_norm.weight": "attn_norm.weight",
-            "layer.1.DenseReluDense.wi_0.weight": "feed_forward.wi_0.weight",
-            "layer.1.DenseReluDense.wi_1.weight": "feed_forward.wi_1.weight",
-            "layer.1.DenseReluDense.wo.weight": "feed_forward.wo.weight",
-            "layer.1.layer_norm.weight": "ffn_norm.weight",
-        }
+        for i in range(self.num_encoder_layers):
+            rename_dict.update({
+                f"encoder.block.{i}.layer.0.SelfAttention.q.weight": f"encoders.{i}.attn.to_q.weight",
+                f"encoder.block.{i}.layer.0.SelfAttention.k.weight": f"encoders.{i}.attn.to_k.weight",
+                f"encoder.block.{i}.layer.0.SelfAttention.v.weight": f"encoders.{i}.attn.to_v.weight",
+                f"encoder.block.{i}.layer.0.SelfAttention.o.weight": f"encoders.{i}.attn.to_out.weight",
+                f"encoder.block.{i}.layer.0.layer_norm.weight": f"encoders.{i}.attn_norm.weight",
+                f"encoder.block.{i}.layer.1.DenseReluDense.wi_0.weight": f"encoders.{i}.feed_forward.wi_0.weight",
+                f"encoder.block.{i}.layer.1.DenseReluDense.wi_1.weight": f"encoders.{i}.feed_forward.wi_1.weight",
+                f"encoder.block.{i}.layer.1.DenseReluDense.wo.weight": f"encoders.{i}.feed_forward.wo.weight",
+                f"encoder.block.{i}.layer.1.layer_norm.weight": f"encoders.{i}.ffn_norm.weight",
+            })
 
         new_state_dict = {}
         for key, param in state_dict.items():
             if key in rename_dict:
-                new_key = rename_dict[key]
-            else:
-                parts = key.split(".")
-                layer_id = parts[2]
-                module_name = ".".join(parts[3:])
-                new_key = "encoders." + layer_id + "." + module_rename_dict[module_name]
-
-            new_state_dict[new_key] = param
+                new_state_dict[rename_dict[key]] = param
         return new_state_dict
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
