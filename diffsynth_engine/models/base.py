@@ -1,9 +1,10 @@
 import os
 import torch
 import torch.nn as nn
-from typing import List, Dict, Union
+from typing import Dict, Union
 
 from diffsynth_engine.models.utils import no_init_weights
+from safetensors.torch import load_file
 
 
 class StateDictConverter:
@@ -23,8 +24,9 @@ class PreTrainedModel(nn.Module):
         super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], **kwargs):
-        raise NotImplementedError()
+    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device:str, dtype: torch.dtype, **kwargs):
+        state_dict = load_file(pretrained_model_path, device=device)
+        return cls.from_state_dict(state_dict, device=device, dtype=dtype, **kwargs)
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):

@@ -16,3 +16,8 @@ class EpsilonSampler:
     def _to_denoised(self, sigma, model_outputs, x):
         # eps prediction
         return x - sigma * model_outputs
+    
+    def add_noise(self, latents, noise, sigma):
+        alpha_t = 1 / ((sigma ** 2 + 1) ** 0.5)
+        sigma_t = sigma / ((sigma ** 2 + 1) ** 0.5)
+        return alpha_t * latents + sigma_t * noise

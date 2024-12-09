@@ -9,3 +9,7 @@ class FlowMatchEulerSampler:
 
         latents = latents + model_outputs * (sigma_next - sigma)
         return latents
+    
+    def add_noise(self, latents, noise, sigma):
+        return (1 - sigma) * latents + noise * sigma
+    

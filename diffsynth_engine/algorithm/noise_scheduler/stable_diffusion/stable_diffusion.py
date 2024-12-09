@@ -1,7 +1,5 @@
 import torch
-
-from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero, BaseScheduler
-
+from ..base_scheduler import append_zero, BaseScheduler
 
 def linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, num_train_steps: int = 1000):
     """
@@ -68,6 +66,9 @@ class StableDiffusionScheduler(BaseScheduler):
         return log_sigma.exp()
 
     def schedule(self, num_inference_steps: int):
+        """
+        Uniformly sample timesteps for inference
+        """
         timesteps = torch.linspace(self.num_train_steps - 1, 0, num_inference_steps, device=self.sigmas.device)
         sigmas = append_zero(self.t_to_sigma(timesteps))
         return sigmas, timesteps

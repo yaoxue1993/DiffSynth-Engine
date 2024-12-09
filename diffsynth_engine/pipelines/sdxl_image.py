@@ -1,6 +1,7 @@
 import os
 import torch
-from typing import Callable, Dict, List
+import logging
+from typing import Callable, Dict, Union, Optional
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
@@ -10,8 +11,8 @@ from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXL
 from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
-from diffsynth_engine.algorithm.noise_scheduler import KarrasScheduler
-from diffsynth_engine.algorithm.sampler import DPMSolverPlusPlus2MSampler
+from diffsynth_engine.algorithm.noise_scheduler import StableDiffusionScheduler
+from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
@@ -30,11 +31,11 @@ class SDXLImagePipeline(BasePipeline):
                  unet: SDXLUNet,
                  vae_decoder: SDXLVAEDecoder,
                  vae_encoder: SDXLVAEEncoder,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16):
-        super().__init__(device=device, dtype=dtype)
-        self.noise_scheduler = KarrasScheduler()
-        self.sampler = DPMSolverPlusPlus2MSampler()
+                 device: str = "cuda",
+                 torch_dtype: torch.dtype = torch.float16):
+        super().__init__(device=device, torch_dtype=torch_dtype)
+        self.noise_scheduler = StableDiffusionScheduler()
+        self.sampler = EulerSampler()
         # models
         self.tokenizer = tokenizer
         self.tokenizer_2 = tokenizer_2
@@ -103,12 +104,12 @@ class SDXLImagePipeline(BasePipeline):
         image = self.vae_decoder(latent.to(self.device), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return image
 
-    def encode_prompt(self, prompt, clip_skip=1, clip_skip_2=2):
+    def encode_prompt(self, prompt, clip_skip):
         input_ids = tokenize_long_prompt(self.tokenizer, prompt).to(self.device)
         prompt_emb_1 = self.text_encoder(input_ids, clip_skip=clip_skip)
 
         input_ids_2 = tokenize_long_prompt(self.tokenizer_2, prompt).to(self.device)
-        add_text_embeds, prompt_emb_2 = self.text_encoder_2(input_ids_2, clip_skip=clip_skip_2)
+        add_text_embeds, prompt_emb_2 = self.text_encoder_2(input_ids_2, clip_skip=clip_skip)
 
         # Merge
         if prompt_emb_1.shape[0] != prompt_emb_2.shape[0]:
@@ -123,7 +124,7 @@ class SDXLImagePipeline(BasePipeline):
 
         return {"encoder_hidden_states": prompt_emb, "add_text_embeds": add_text_embeds}
 
-    def prepare_extra_input(self, latents=None):
+    def prepare_extra_input(self, latents):
         height, width = latents.shape[2] * 8, latents.shape[3] * 8
         add_time_id = torch.tensor([height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
         return {"add_time_id": add_time_id}
@@ -197,9 +198,8 @@ class SDXLImagePipeline(BasePipeline):
             prompt: str,
             negative_prompt: str = "",
             cfg_scale: float = 7.5,
-            clip_skip: int = 1,
-            clip_skip_2: int = 2,
-            input_image: Image.Image | None = None,
+            clip_skip: int = 2,
+            input_image: Optional[Image.Image] = None,
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
@@ -211,67 +211,62 @@ class SDXLImagePipeline(BasePipeline):
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
     ):
-        """
-        Args:
+        
+        latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
+                                    dtype=self.torch_dtype)
 
-            TODO: add details
-        """
-
-        # Tiler parameters
-        tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
-
-        # Prepare noise scheduler and sampler
+        # Prepare scheduler
         sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
 
-        # Prepare latent tensors
         if input_image is not None:
             self.load_models_to_device(['vae_encoder'])
-            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image, **tiler_kwargs)
-            noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                        dtype=self.dtype)
-            latents = self.sampler.step(latents, noise, 0)
-        else:
-            latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                          dtype=self.dtype)
+            noise = latents
+            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.torch_dtype)
+            latents = self.encode_image(image)
+            denoise_steps = min(int(num_inference_steps * denoising_strength), num_inference_steps)
+            t_start = max(num_inference_steps - denoise_steps, 0)
+            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]            
+            timesteps = timesteps[t_start:]
+            latents = self.sampler.add_noise(latents, noise, sigma_start)
+        # Initialize sampler
+        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)            
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
-        positive_prompt_emb = self.encode_prompt(prompt, clip_skip=clip_skip, clip_skip_2=clip_skip_2)
-        negative_prompt_emb = self.encode_prompt(negative_prompt, clip_skip=clip_skip, clip_skip_2=clip_skip_2)
+        positive_prompt_emb = self.encode_prompt(prompt, clip_skip=clip_skip)
+        negative_prompt_emb = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
 
         # Prepare extra input
         extra_input = self.prepare_extra_input(latents)
 
         # Denoise
         self.load_models_to_device(['unet'])
-        for progress_id, timestep in enumerate(progress_bar_cmd(timesteps)):
+        for i, timestep in enumerate(progress_bar_cmd(timesteps)):
             timestep = timestep.unsqueeze(0).to(self.device)
 
             # Classifier-free guidance
             positive_noise_pred = self.predict_noise(
                 sample=latents, timestep=timestep, **extra_input,
-                **positive_prompt_emb, **tiler_kwargs,
+                **positive_prompt_emb,
                 device=self.device,
             )
 
             if cfg_scale != 1.0:
                 negative_noise_pred = self.predict_noise(
                     sample=latents, timestep=timestep, **extra_input,
-                    **negative_prompt_emb, **tiler_kwargs,
+                    **negative_prompt_emb,
                     device=self.device,
                 )
                 noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             else:
                 noise_pred = positive_noise_pred
 
-            # DDIM
-            # TODO: and fix it
-            latents = self.sampler.step(latents, noise_pred, progress_id)
+            # Denoise
+            latents = self.sampler.step(latents, noise_pred, i)
 
             # UI
             if progress_bar_st is not None:
-                progress_bar_st.progress(progress_id / len(timesteps))
+                progress_bar_st.progress(i / len(timesteps))
 
         # Decode image
         self.load_models_to_device(['vae_decoder'])

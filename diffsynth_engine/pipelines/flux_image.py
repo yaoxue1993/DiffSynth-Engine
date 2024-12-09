@@ -11,12 +11,10 @@ from diffsynth_engine.models.basic.tiler import FastTileWorker
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
-from diffsynth_engine.algorithm.sampler import EulerSampler
+from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
-from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
-
 
 class FluxImagePipeline(BasePipeline):
 
@@ -32,7 +30,7 @@ class FluxImagePipeline(BasePipeline):
                  dtype: torch.dtype = torch.bfloat16):
         super().__init__(device=device, dtype=dtype)
         self.noise_scheduler = RecifitedFlowScheduler()
-        self.sampler = EulerSampler()
+        self.sampler = FlowMatchEulerSampler()
         # models
         self.tokenizer = tokenizer
         self.tokenizer_2 = tokenizer_2

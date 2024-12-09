@@ -1,5 +1,5 @@
 import torch
-from diffsynth_engine.algorithm.sampler.base_sampler import EpsilonSampler
+from .epsilon import EpsilonSampler
 
 class DDPMSampler(EpsilonSampler):
     def __init__(self):

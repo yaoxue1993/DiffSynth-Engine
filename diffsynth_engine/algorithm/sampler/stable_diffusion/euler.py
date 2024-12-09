@@ -1,4 +1,4 @@
-from diffsynth_engine.algorithm.sampler.base_sampler import EpsilonSampler
+from .epsilon import EpsilonSampler
 class EulerSampler(EpsilonSampler):
     def initialize(self, latents, timesteps, sigmas):        
         self.sigmas = sigmas

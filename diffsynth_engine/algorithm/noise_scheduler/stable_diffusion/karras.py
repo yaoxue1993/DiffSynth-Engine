@@ -1,8 +1,6 @@
 import torch
-
-from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
-from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.stable_diffusion import StableDiffusionScheduler
-
+from ..base_scheduler import append_zero
+from .stable_diffusion import StableDiffusionScheduler
 
 class KarrasScheduler(StableDiffusionScheduler):
     def __init__(self):

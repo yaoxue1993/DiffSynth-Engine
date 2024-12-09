@@ -1,3 +1,5 @@
+from ..base_scheduler import append_zero
+from .stable_diffusion import StableDiffusionScheduler
 import torch
 import math
 
