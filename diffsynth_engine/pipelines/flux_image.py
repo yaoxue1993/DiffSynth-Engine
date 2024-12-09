@@ -14,7 +14,7 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 import logging
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 class FluxImagePipeline(BasePipeline):
 

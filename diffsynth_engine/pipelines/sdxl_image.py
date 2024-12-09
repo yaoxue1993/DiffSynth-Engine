@@ -1,7 +1,7 @@
 import os
 import torch
 import logging
-from typing import Callable, Dict, Union, Optional
+from typing import Callable, Dict, Union, Optional, List
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
@@ -32,8 +32,8 @@ class SDXLImagePipeline(BasePipeline):
                  vae_decoder: SDXLVAEDecoder,
                  vae_encoder: SDXLVAEEncoder,
                  device: str = "cuda",
-                 torch_dtype: torch.dtype = torch.float16):
-        super().__init__(device=device, torch_dtype=torch_dtype)
+                 dtype: torch.dtype = torch.float16):
+        super().__init__(device=device, dtype=dtype)
         self.noise_scheduler = StableDiffusionScheduler()
         self.sampler = EulerSampler()
         # models
@@ -213,7 +213,7 @@ class SDXLImagePipeline(BasePipeline):
     ):
         
         latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                    dtype=self.torch_dtype)
+                                    dtype=self.dtype)
 
         # Prepare scheduler
         sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
@@ -221,7 +221,7 @@ class SDXLImagePipeline(BasePipeline):
         if input_image is not None:
             self.load_models_to_device(['vae_encoder'])
             noise = latents
-            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.torch_dtype)
+            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
             denoise_steps = min(int(num_inference_steps * denoising_strength), num_inference_steps)
             t_start = max(num_inference_steps - denoise_steps, 0)
