@@ -1,38 +1,39 @@
-import unittest
-import os
 import torch
 import numpy as np
 from safetensors.torch import load_file
 from PIL import Image
 
 from diffsynth_engine.models.flux import FluxVAEEncoder, FluxVAEDecoder
-from diffsynth_engine.utils.env import DIFFSYNTH_CACHE
-from diffsynth_engine.utils.constants import TEST_ASSETS_PATH
-
-_vae_model_path = os.path.join(DIFFSYNTH_CACHE, "flux.1-dev", "ae.safetensors")
-_input_image = os.path.join(TEST_ASSETS_PATH, "wukong_1024_1024.png")
+from diffsynth_engine.utils.download import download_model
+from tests.common.test_case import TestCase
 
 
-class TestFluxVAE(unittest.TestCase):
+class TestFluxVAE(TestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._vae_model_path = download_model(
+            "modelscope://muse/flux_vae?revision=20241015120836&endpoint=www.modelscope.cn")
+        self._input_image = self.testdata_dir / "input" / "wukong_1024_1024.png"
 
     def test_encode(self):
-        loaded_state_dict = load_file(_vae_model_path)
+        loaded_state_dict = load_file(self._vae_model_path)
         encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
 
-        loaded_state_dict = load_file(os.path.join(TEST_ASSETS_PATH, "test_flux_vae.safetensors"))
+        loaded_state_dict = load_file(self.testdata_dir / "expect" / "flux" / "test_flux_vae.safetensors")
         expected = loaded_state_dict["encoded"]
-        with Image.open(_input_image).convert("RGB") as image:
+        with Image.open(self._input_image).convert("RGB") as image:
             image_tensor = torch.tensor(np.array(image, dtype=np.float32) * (2 / 255) - 1)
-            image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0).to('cuda:0')
+        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0).to('cuda:0')
         with torch.no_grad():
             result = encoder(image_tensor).cpu()
         self.assertTrue(torch.allclose(expected, result, atol=1e-6))
 
     def test_decode(self):
-        loaded_state_dict = load_file(_vae_model_path)
+        loaded_state_dict = load_file(self._vae_model_path)
         decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
 
-        loaded_state_dict = load_file(os.path.join(TEST_ASSETS_PATH, "test_flux_vae.safetensors"))
+        loaded_state_dict = load_file(self.testdata_dir / "expect" / "flux" / "test_flux_vae.safetensors")
         latent_tensor, expected = loaded_state_dict["encoded"], loaded_state_dict["decoded"]
         latent_tensor = latent_tensor.to('cuda:0')
         with torch.no_grad():

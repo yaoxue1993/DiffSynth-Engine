@@ -1,26 +1,27 @@
-import unittest
 import torch
 
-from diffsynth_engine.tokenizers.clip import CLIPTokenizer
-from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH
+from diffsynth_engine.tokenizers.t5 import T5TokenizerFast
+from diffsynth_engine.utils.constants import FLUX_TOKENIZER_2_CONF_PATH
+from tests.common.test_case import TestCase
 
 
-class TestCLIPTokenizer(unittest.TestCase):
+class TestT5TokenizerFast(TestCase):
 
     def setUp(self):
-        self.tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+        super().setUp()
+        self.tokenizer = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
 
     def test_tokenize(self):
         cases = [
             {
                 "texts": "Hello, World!",
-                "expected": ['hello</w>', ',</w>', 'world</w>', '!</w>'],
+                "expected": ['▁Hello', ',', '▁World', '!', '</s>'],
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
-                "expected": [['hello</w>', ',</w>', 'world</w>', '!</w>'],
-                             ['diff', 'synth</w>', '-</w>', 'engine</w>', 'developed</w>', 'by</w>', 'muse</w>',
-                              'ai</w>', '+</w>', 'model', 'scope</w>']],
+                "expected": [['▁Hello', ',', '▁World', '!', '</s>'],
+                             ['▁D', 'iff', 'S', 'y', 'n', 'th', '-', 'Engine', '▁developed', '▁by', '▁Mus', 'e', '▁AI',
+                              '+', 'Model', 'scope', '</s>']],
             }
         ]
 
@@ -33,12 +34,12 @@ class TestCLIPTokenizer(unittest.TestCase):
         cases = [
             {
                 "texts": "Hello, World!",
-                "expected": [3306, 267, 1002, 256],
+                "expected": [8774, 6, 1150, 55, 1],
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
-                "expected": [[3306, 267, 1002, 256],
-                             [44073, 24462, 268, 5857, 8763, 638, 15686, 2215, 266, 4591, 7979]],
+                "expected": [[8774, 6, 1150, 55, 1],
+                             [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]],
             }
         ]
 
@@ -53,19 +54,19 @@ class TestCLIPTokenizer(unittest.TestCase):
     def test_decode(self):
         cases = [
             {
-                "ids": [49406, 3306, 267, 1002, 256, 49407],
-                "expected": "hello, world!",
+                "ids": [8774, 6, 1150, 55, 1],
+                "expected": "Hello, World!",
                 "kwargs": {"skip_special_tokens": True},
             },
             {
-                "ids": [49406, 3306, 267, 1002, 256, 49407],
-                "expected": "<|startoftext|>hello, world! <|endoftext|>",
+                "ids": [8774, 6, 1150, 55, 1],
+                "expected": "Hello, World!</s>",
                 "kwargs": {"skip_special_tokens": False},
             },
             {
-                "ids": [[3306, 267, 1002, 256, 49407],
-                        [44073, 24462, 268, 5857, 8763, 638, 15686, 2215, 266, 4591, 7979, 49407]],
-                "expected": ["hello, world!", "diffsynth - engine developed by muse ai + modelscope"],
+                "ids": [[8774, 6, 1150, 55, 1],
+                        [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]],
+                "expected": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "kwargs": {"skip_special_tokens": True},
             }
         ]
@@ -82,23 +83,23 @@ class TestCLIPTokenizer(unittest.TestCase):
         cases = [
             {
                 "texts": "Hello, World!",
-                "expected": torch.tensor([[49406, 3306, 267, 1002, 256, 49407]], dtype=torch.long),
-                "shape": (1, 77),
+                "expected": torch.tensor([[8774, 6, 1150, 55, 1]], dtype=torch.long),
+                "shape": (1, 512),
                 "kwargs": {},
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "expected": torch.tensor(
-                    [[49406, 3306, 267, 1002, 256, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407],
-                     [49406, 44073, 24462, 268, 5857, 8763, 638, 15686, 2215, 266, 4591, 7979, 49407]]),
-                "shape": (2, 77),
+                    [[8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                     [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]]),
+                "shape": (2, 512),
                 "kwargs": {},
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "expected": torch.tensor(
-                    [[49406, 3306, 267, 1002, 256, 49407, 49407, 49407, 49407, 49407],
-                     [49406, 44073, 24462, 268, 5857, 8763, 638, 15686, 2215, 49407]]),
+                    [[8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0],
+                     [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 1]]),
                 "shape": (2, 10),
                 "kwargs": {"max_length": 10},
             }

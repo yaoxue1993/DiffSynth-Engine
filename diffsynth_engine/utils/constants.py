@@ -11,9 +11,6 @@ FLUX_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "flux", "toke
 SDXL_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "stable_diffusion_xl", "tokenizer")
 SDXL_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "stable_diffusion_xl", "tokenizer_2")
 
-# test assets
-TEST_ASSETS_PATH = os.path.join(REPO_ROOT, "tests", "assets")
-
 # data size
 KB = 1024
 MB = 1024 * KB
