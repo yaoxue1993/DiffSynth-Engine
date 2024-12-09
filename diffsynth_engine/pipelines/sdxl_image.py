@@ -11,7 +11,7 @@ from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXL
 from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
-from diffsynth_engine.algorithm.noise_scheduler import StableDiffusionScheduler
+from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
@@ -34,7 +34,7 @@ class SDXLImagePipeline(BasePipeline):
                  device: str = "cuda",
                  dtype: torch.dtype = torch.float16):
         super().__init__(device=device, dtype=dtype)
-        self.noise_scheduler = StableDiffusionScheduler()
+        self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
         # models
         self.tokenizer = tokenizer
@@ -129,68 +129,7 @@ class SDXLImagePipeline(BasePipeline):
         add_time_id = torch.tensor([height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
         return {"add_time_id": add_time_id}
 
-    def predict_noise(self,
-                      sample: torch.Tensor,
-                      add_time_id: torch.Tensor,
-                      add_text_embeds: torch.Tensor,
-                      timestep: torch.Tensor,
-                      encoder_hidden_states: torch.Tensor,
-                      unet_batch_size: int = 1,
-                      tiled: bool = False,
-                      tile_size: int = 64,
-                      tile_stride: int = 32,
-                      device: str = 'cuda:0',
-                      vram_limit_level: int = 0,  # TODO: define enum
-                      ) -> torch.Tensor:
-        # 1. time
-        t_emb = self.unet.time_proj(timestep).to(sample.dtype)
-        t_emb = self.unet.time_embedding(t_emb)
 
-        time_embeds = self.unet.add_time_proj(add_time_id)
-        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
-        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
-        add_embeds = add_embeds.to(sample.dtype)
-        add_embeds = self.unet.add_time_embedding(add_embeds)
-
-        time_emb = t_emb + add_embeds
-
-        # 2. pre-process
-        hidden_states = self.unet.conv_in(sample)
-        text_emb = encoder_hidden_states if self.unet.text_intermediate_proj is None else \
-            self.unet.text_intermediate_proj(encoder_hidden_states)
-        res_stack = [hidden_states]
-
-        # 3. blocks
-        for block_id, block in enumerate(self.unet.blocks):
-            if isinstance(block, PushBlock):
-                hidden_states, time_emb, text_emb, res_stack = block(hidden_states, time_emb, text_emb, res_stack)
-                if vram_limit_level >= 1:
-                    res_stack[-1] = res_stack[-1].cpu()
-            elif isinstance(block, PopBlock):
-                if vram_limit_level >= 1:
-                    res_stack[-1] = res_stack[-1].to(device)
-                hidden_states, time_emb, text_emb, res_stack = block(hidden_states, time_emb, text_emb, res_stack)
-            else:
-                hidden_states_input = hidden_states
-                hidden_states_output = []
-                for batch_id in range(0, sample.shape[0], unet_batch_size):
-                    batch_id_ = min(batch_id + unet_batch_size, sample.shape[0])
-                    hidden_states, _, _, _ = block(
-                        hidden_states_input[batch_id: batch_id_],
-                        time_emb[batch_id: batch_id_],
-                        text_emb[batch_id: batch_id_],
-                        res_stack,
-                        tiled=tiled, tile_size=tile_size, tile_stride=tile_stride,
-                    )
-                    hidden_states_output.append(hidden_states)
-                hidden_states = torch.concat(hidden_states_output, dim=0)
-
-        # 4. output
-        hidden_states = self.unet.conv_norm_out(hidden_states)
-        hidden_states = self.unet.conv_act(hidden_states)
-        hidden_states = self.unet.conv_out(hidden_states)
-
-        return hidden_states
 
     @torch.no_grad()
     def __call__(
@@ -210,24 +149,26 @@ class SDXLImagePipeline(BasePipeline):
             seed: int | None = None,
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
-    ):
-        
+    ):        
         latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
                                     dtype=self.dtype)
 
         # Prepare scheduler
-        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
-
-        if input_image is not None:
+        if input_image is not None:    
+            # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
+            total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps)                        
             self.load_models_to_device(['vae_encoder'])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
-            denoise_steps = min(int(num_inference_steps * denoising_strength), num_inference_steps)
-            t_start = max(num_inference_steps - denoise_steps, 0)
+            t_start = max(total_steps - num_inference_steps, 0)
             sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]            
             timesteps = timesteps[t_start:]
             latents = self.sampler.add_noise(latents, noise, sigma_start)
+        else:
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)            
+
         # Initialize sampler
         self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)            
 
@@ -245,14 +186,14 @@ class SDXLImagePipeline(BasePipeline):
             timestep = timestep.unsqueeze(0).to(self.device)
 
             # Classifier-free guidance
-            positive_noise_pred = self.predict_noise(
+            positive_noise_pred = self.unet(
                 sample=latents, timestep=timestep, **extra_input,
                 **positive_prompt_emb,
                 device=self.device,
             )
 
             if cfg_scale != 1.0:
-                negative_noise_pred = self.predict_noise(
+                negative_noise_pred = self.unet(
                     sample=latents, timestep=timestep, **extra_input,
                     **negative_prompt_emb,
                     device=self.device,

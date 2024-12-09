@@ -1,13 +1,13 @@
 from ..base_scheduler import append_zero
-from .stable_diffusion import StableDiffusionScheduler
+from .linear import ScaledLinearScheduler
 import torch
 import math
 
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
-from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.stable_diffusion import StableDiffusionScheduler
+from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.linear import ScaledLinearScheduler
 
 
-class ExponentialScheduler(StableDiffusionScheduler):
+class ExponentialScheduler(ScaledLinearScheduler):
     def __init__(self):
         super().__init__()
 

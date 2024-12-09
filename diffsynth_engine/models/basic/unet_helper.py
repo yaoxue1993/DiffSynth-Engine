@@ -37,7 +37,7 @@ class BasicTransformerBlock(nn.Module):
         self.act_fn = GEGLU(dim, dim * 4, device=device, dtype=dtype)
         self.ff = nn.Linear(dim * 4, dim, device=device, dtype=dtype)
 
-    def forward(self, hidden_states, encoder_hidden_states, ipadapter_kwargs=None):
+    def forward(self, hidden_states, encoder_hidden_states):
         # 1. Self-Attention
         norm_hidden_states = self.norm1(hidden_states)
         attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
@@ -45,8 +45,7 @@ class BasicTransformerBlock(nn.Module):
 
         # 2. Cross-Attention
         norm_hidden_states = self.norm2(hidden_states)
-        attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states,
-                                 ipadapter_kwargs=ipadapter_kwargs)
+        attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
         hidden_states = attn_output + hidden_states
 
         # 3. Feed-forward
@@ -152,7 +151,6 @@ class AttentionBlock(nn.Module):
             hidden_states, time_emb, text_emb, res_stack,
             cross_frame_attention=False,
             tiled=False, tile_size=64, tile_stride=32,
-            ipadapter_kwargs_list={},
             **kwargs
     ):
         batch, _, height, width = hidden_states.shape
@@ -196,8 +194,7 @@ class AttentionBlock(nn.Module):
             for block_id, block in enumerate(self.transformer_blocks):
                 hidden_states = block(
                     hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    ipadapter_kwargs=ipadapter_kwargs_list.get(block_id, None)
+                    encoder_hidden_states=encoder_hidden_states
                 )
         if cross_frame_attention:
             hidden_states = hidden_states.reshape(batch, height * width, inner_dim)

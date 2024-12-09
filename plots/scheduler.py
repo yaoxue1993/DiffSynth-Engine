@@ -1,9 +1,9 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from diffsynth_engine.algorithm.noise_scheduler import StableDiffusionScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler
+from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler
 
-schedule_function_list = [StableDiffusionScheduler(), ExponentialScheduler(), KarrasScheduler(), BetaScheduler()]
+schedule_function_list = [ScaledLinearScheduler(), ExponentialScheduler(), KarrasScheduler(), BetaScheduler()]
 
 for i, scheduler in enumerate(schedule_function_list, start=1):
     # 对每个schedule函数执行一次采样

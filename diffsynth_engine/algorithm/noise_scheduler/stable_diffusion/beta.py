@@ -1,14 +1,14 @@
 import torch
-from .stable_diffusion import StableDiffusionScheduler
+from .linear import ScaledLinearScheduler
 from ..base_scheduler import append_zero
 import numpy as np
 import scipy.stats as stats
 
-from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.stable_diffusion import StableDiffusionScheduler
+from diffsynth_engine.algorithm.noise_scheduler.stable_diffusion.linear import ScaledLinearScheduler
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
 
 
-class BetaScheduler(StableDiffusionScheduler):
+class BetaScheduler(ScaledLinearScheduler):
     """
     Implemented based on: https://arxiv.org/abs/2407.12173
     """

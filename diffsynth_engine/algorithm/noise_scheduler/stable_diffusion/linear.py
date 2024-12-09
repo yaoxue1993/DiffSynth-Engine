@@ -15,7 +15,7 @@ def scaled_linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0
     return torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_train_steps) ** 2
 
 
-class StableDiffusionScheduler(BaseScheduler):
+class ScaledLinearScheduler(BaseScheduler):
     def __init__(self):
         self.device = "cpu"
         self.num_train_steps = 1000

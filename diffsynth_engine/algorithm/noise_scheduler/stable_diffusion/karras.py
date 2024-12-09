@@ -1,8 +1,8 @@
 import torch
 from ..base_scheduler import append_zero
-from .stable_diffusion import StableDiffusionScheduler
+from .linear import ScaledLinearScheduler
 
-class KarrasScheduler(StableDiffusionScheduler):
+class KarrasScheduler(ScaledLinearScheduler):
     def __init__(self):
         super().__init__()
         self.rho = 7.0
