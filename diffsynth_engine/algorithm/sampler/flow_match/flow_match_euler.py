@@ -4,10 +4,8 @@ class FlowMatchEulerSampler:
         self.timesteps = timesteps
 
     def step(self, latents, model_outputs, i):
-        sigma = self.sigmas[i]
-        sigma_next = self.sigmas[i + 1]
-
-        latents = latents + model_outputs * (sigma_next - sigma)
+        dt = self.sigmas[i + 1] - self.sigmas[i]
+        latents = latents + model_outputs * dt
         return latents
     
     def add_noise(self, latents, noise, sigma):
