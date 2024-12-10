@@ -1,5 +1,6 @@
 import os
 import torch
+import math
 from typing import Callable, Dict, List
 from types import ModuleType
 from safetensors.torch import load_file
@@ -15,6 +16,18 @@ from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 import logging
 logger = logging.getLogger(__name__)
+
+def calculate_shift(
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.15,
+):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    mu = image_seq_len * m + b
+    return mu
 
 class FluxImagePipeline(BasePipeline):
 
@@ -210,7 +223,10 @@ class FluxImagePipeline(BasePipeline):
         tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
 
         # Prepare noise scheduler and sampler
-        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=1.0) # TODO: check mu
+        image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
+        mu = calculate_shift(image_seq_len)
+        sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
+        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
         self.sampler.initialize(None, sigmas, timesteps)
 
         # Prepare latent tensors

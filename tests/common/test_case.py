@@ -1,9 +1,10 @@
 import unittest
 import os
 import torch
+from safetensors.torch import load_file
 from pathlib import Path
 from PIL import Image
-
+from typing import Dict
 from diffsynth_engine.utils.download import download_model
 from tests.common.utils import make_deterministic, compute_normalized_ssim
 
@@ -32,11 +33,20 @@ class TestCase(unittest.TestCase):
 
 
 class ImageTestCase(TestCase):
+    def get_expect_tensor(self, name) -> Dict[str, torch.Tensor]:
+        return load_file(ImageTestCase.testdata_dir / "expect" / f"{name}")
+    
+    def get_input_tensor(self, name) -> Dict[str, torch.Tensor]:
+        return load_file(ImageTestCase.testdata_dir / "input" / f"{name}")
+
     def get_expect_image(self, name) -> Image.Image:
         return Image.open(ImageTestCase.testdata_dir / f"expect/{name}")
 
     def get_input_image(self, name) -> Image.Image:
         return Image.open(ImageTestCase.testdata_dir / f"input/{name}")
+    
+    def assertTensorEqual(self, input_tensor: torch.Tensor, expect_tensor: torch.Tensor, atol=1e-5, rtol=1e-5):
+        self.assertTrue(torch.allclose(input_tensor, expect_tensor, atol=atol, rtol=rtol))
 
     def assertImageEqual(self, input_image: Image.Image, expect_image: Image.Image, threshold=0.965):
         self.assertGreaterEqual(compute_normalized_ssim(input_image, expect_image), threshold)

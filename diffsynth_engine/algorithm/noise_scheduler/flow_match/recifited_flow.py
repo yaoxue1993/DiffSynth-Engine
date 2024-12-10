@@ -25,11 +25,12 @@ class RecifitedFlowScheduler(BaseScheduler):
     def _time_shift(self, mu: float, sigma: float, t: torch.Tensor):
         return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
-    def schedule(self, num_inference_steps: int, mu: float | None = None):
-        timesteps = torch.linspace(
-            self._sigma_to_t(self.sigma_max), self._sigma_to_t(self.sigma_min), num_inference_steps
-        )
-        sigmas = timesteps / self.num_train_timesteps
+    def schedule(self, num_inference_steps: int, mu: float | None = None, sigmas: torch.Tensor | None = None):
+        if sigmas is None:
+            timesteps = torch.linspace(
+                self._sigma_to_t(self.sigma_max), self._sigma_to_t(self.sigma_min), num_inference_steps
+            )
+            sigmas = timesteps / self.num_train_timesteps
         if self.use_dynamic_shifting:
             # FLUX
             sigmas = self._time_shift(mu, 1.0, sigmas)
