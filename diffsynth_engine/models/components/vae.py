@@ -392,7 +392,7 @@ class VAEDecoder(PreTrainedModel):
             ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
         ])
 
-        self.conv_norm_out = nn.GroupNorm(num_channels=128, num_groups=32, eps=1e-5, device=device, dtype=dtype)
+        self.conv_norm_out = nn.GroupNorm(num_channels=128, num_groups=32, eps=1e-6, device=device, dtype=dtype)
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(128, 3, kernel_size=3, padding=1, device=device, dtype=dtype)
 

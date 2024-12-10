@@ -87,7 +87,7 @@ class Attention(nn.Module):
         if attn_mask is not None:
             attn_mask = repeat(attn_mask, "1 n ... -> (b n) ...", b=bs)
 
-        hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask)
+        hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask, scale=self.scale)
         hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
