@@ -14,20 +14,23 @@ from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
-import logging
-logger = logging.getLogger(__name__)
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
+
 
 def calculate_shift(
-    image_seq_len,
-    base_seq_len: int = 256,
-    max_seq_len: int = 4096,
-    base_shift: float = 0.5,
-    max_shift: float = 1.15,
+        image_seq_len,
+        base_seq_len: int = 256,
+        max_seq_len: int = 4096,
+        base_shift: float = 0.5,
+        max_shift: float = 1.15,
 ):
     m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
     b = base_shift - m * base_seq_len
     mu = image_seq_len * m + b
     return mu
+
 
 class FluxImagePipeline(BasePipeline):
 

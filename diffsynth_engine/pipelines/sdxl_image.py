@@ -1,7 +1,6 @@
 import os
 import torch
-import logging
-from typing import Callable, Dict, Union, Optional, List
+from typing import Callable, Dict, List
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
@@ -45,7 +44,7 @@ class SDXLImagePipeline(BasePipeline):
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
         self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
-                                               device=device, dtype=dtype)        
+                                               device=device, dtype=dtype)
         self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
 
     @classmethod
@@ -111,7 +110,7 @@ class SDXLImagePipeline(BasePipeline):
         prompt_emb_1 = self.text_encoder(input_ids, clip_skip=clip_skip)
 
         input_ids_2 = tokenize_long_prompt(self.tokenizer_2, prompt).to(self.device)
-        add_text_embeds, prompt_emb_2 = self.text_encoder_2(input_ids_2, clip_skip=clip_skip)
+        prompt_emb_2, add_text_embeds = self.text_encoder_2(input_ids_2, clip_skip=clip_skip)
 
         # Merge
         if prompt_emb_1.shape[0] != prompt_emb_2.shape[0]:
@@ -145,7 +144,7 @@ class SDXLImagePipeline(BasePipeline):
             negative_prompt: str = "",
             cfg_scale: float = 7.5,
             clip_skip: int = 2,
-            input_image: Optional[Image.Image] = None,
+            input_image: Image.Image | None = None,
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
@@ -156,28 +155,28 @@ class SDXLImagePipeline(BasePipeline):
             seed: int | None = None,
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
-    ):        
+    ):
         latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                    dtype=self.dtype)
+                                      dtype=self.dtype)
 
         # Prepare scheduler
-        if input_image is not None:    
+        if input_image is not None:
             # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
             total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(total_steps)                        
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
             self.load_models_to_device(['vae_encoder'])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
             t_start = max(total_steps - num_inference_steps, 0)
-            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]            
+            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
             timesteps = timesteps[t_start:]
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
-            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)            
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
 
-        # Initialize sampler
-        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)            
+            # Initialize sampler
+        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
@@ -186,7 +185,7 @@ class SDXLImagePipeline(BasePipeline):
 
         # Prepare extra input
         add_time_id = self.prepare_extra_input(latents)
-    
+
         # Denoise
         self.load_models_to_device(['unet'])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):

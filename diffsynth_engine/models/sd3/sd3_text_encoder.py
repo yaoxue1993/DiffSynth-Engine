@@ -282,7 +282,7 @@ class SD3TextEncoder1(SDTextEncoder):
                 hidden_states = embeds
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
-        return pooled_embeds, hidden_states
+        return hidden_states, pooled_embeds
 
     @classmethod
     def from_state_dict(

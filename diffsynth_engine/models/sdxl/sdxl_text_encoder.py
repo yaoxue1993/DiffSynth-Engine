@@ -912,7 +912,7 @@ class SDXLTextEncoder2(PreTrainedModel):
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
         pooled_embeds = self.text_projection(pooled_embeds)
-        return pooled_embeds, hidden_states
+        return hidden_states, pooled_embeds
 
     @classmethod
     def from_state_dict(
