@@ -45,8 +45,26 @@ class ImageTestCase(TestCase):
     def get_input_image(self, name) -> Image.Image:
         return Image.open(ImageTestCase.testdata_dir / f"input/{name}")
     
+
     def assertTensorEqual(self, input_tensor: torch.Tensor, expect_tensor: torch.Tensor, atol=1e-5, rtol=1e-5):
+        # 计算绝对误差和相对误差
+        abs_diff = torch.abs(input_tensor - expect_tensor)
+        rel_diff = abs_diff / torch.abs(expect_tensor)
+        # 计算平均绝对误差和相对误差
+        mean_abs_diff = torch.mean(abs_diff).item()
+        mean_rel_diff = torch.mean(rel_diff).item()
+        # 计算最大绝对误差和相对误差
+        max_abs_diff = torch.max(abs_diff).item()
+        max_rel_diff = torch.max(rel_diff).item()
+
+        if not torch.allclose(input_tensor, expect_tensor, atol=atol, rtol=rtol):
+            print(f"atol: {atol}\trtol: {rtol}")            
+            print(f"mean_abs_diff: {mean_abs_diff}\tmean_rel_diff: {mean_rel_diff}")
+            print(f"max_abs_diff: {max_abs_diff}\tmax_rel_diff: {max_rel_diff}")
+            
+
         self.assertTrue(torch.allclose(input_tensor, expect_tensor, atol=atol, rtol=rtol))
+        
 
     def assertImageEqual(self, input_image: Image.Image, expect_image: Image.Image, threshold=0.965):
         self.assertGreaterEqual(compute_normalized_ssim(input_image, expect_image), threshold)

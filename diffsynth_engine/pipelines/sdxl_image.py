@@ -7,8 +7,8 @@ from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
+from diffsynth_engine.models.basic.timestep import TemporalTimesteps
 from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
-from diffsynth_engine.models.basic.unet_helper import PushBlock, PopBlock
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
@@ -44,6 +44,8 @@ class SDXLImagePipeline(BasePipeline):
         self.unet = unet
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
+        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
+                                               device=device, dtype=dtype)        
         self.model_names = ['text_encoder', 'text_encoder_2', 'unet', 'vae_decoder', 'vae_encoder']
 
     @classmethod
@@ -122,14 +124,19 @@ class SDXLImagePipeline(BasePipeline):
         add_text_embeds = add_text_embeds[0:1]
         prompt_emb = prompt_emb.reshape((1, prompt_emb.shape[0] * prompt_emb.shape[1], -1))
 
-        return {"encoder_hidden_states": prompt_emb, "add_text_embeds": add_text_embeds}
+        return prompt_emb, add_text_embeds
 
     def prepare_extra_input(self, latents):
         height, width = latents.shape[2] * 8, latents.shape[3] * 8
         add_time_id = torch.tensor([height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
-        return {"add_time_id": add_time_id}
+        return add_time_id
 
-
+    def prepare_add_embeds(self, add_text_embeds, add_time_id, dtype):
+        time_embeds = self.add_time_proj(add_time_id)
+        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
+        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
+        add_embeds = add_embeds.to(dtype)
+        return add_embeds
 
     @torch.no_grad()
     def __call__(
@@ -174,28 +181,29 @@ class SDXLImagePipeline(BasePipeline):
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
-        positive_prompt_emb = self.encode_prompt(prompt, clip_skip=clip_skip)
-        negative_prompt_emb = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
+        positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
+        negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
 
         # Prepare extra input
-        extra_input = self.prepare_extra_input(latents)
-
+        add_time_id = self.prepare_extra_input(latents)
+    
         # Denoise
         self.load_models_to_device(['unet'])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
             timestep = timestep.unsqueeze(0).to(self.device)
-
             # Classifier-free guidance
+            y = self.prepare_add_embeds(positive_add_text_embeds, add_time_id, self.dtype)
             positive_noise_pred = self.unet(
-                sample=latents, timestep=timestep, **extra_input,
-                **positive_prompt_emb,
+                x=latents, timestep=timestep, y=y,
+                context=positive_prompt_emb,
                 device=self.device,
             )
 
             if cfg_scale != 1.0:
+                y = self.prepare_add_embeds(negative_add_text_embeds, add_time_id, self.dtype)
                 negative_noise_pred = self.unet(
-                    sample=latents, timestep=timestep, **extra_input,
-                    **negative_prompt_emb,
+                    x=latents, timestep=timestep, y=y,
+                    context=negative_prompt_emb,
                     device=self.device,
                 )
                 noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)

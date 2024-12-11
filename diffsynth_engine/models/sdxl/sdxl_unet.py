@@ -1799,12 +1799,12 @@ class SDXLUNet(PreTrainedModel):
     def __init__(self,
                  is_kolors: bool = False,
                  device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16
+                 dtype: torch.dtype = torch.float16,
+                 use_gradient_checkpointing: bool = False
                  ):
         super().__init__()
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
-        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
-                                               device=device, dtype=dtype)
         self.add_time_embedding = nn.Sequential(
             nn.Linear(5632 if is_kolors else 2816, 1280, device=device, dtype=dtype),
             nn.SiLU(),
@@ -1880,27 +1880,21 @@ class SDXLUNet(PreTrainedModel):
 
     def forward(
             self,
-            sample, timestep, encoder_hidden_states, add_time_id, add_text_embeds,
+            x, timestep, context, y,
             tiled=False, tile_size=64, tile_stride=8,
-            use_gradient_checkpointing=False,
             **kwargs
     ):
         # 1. time embedding
-        t_emb = self.time_embedding(timestep, dtype=sample.dtype)
+        t_emb = self.time_embedding(timestep, dtype=x.dtype)
         ## add embedding
-        time_embeds = self.add_time_proj(add_time_id)
-        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
-        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
-        add_embeds = add_embeds.to(sample.dtype)
-        add_embeds = self.add_time_embedding(add_embeds)
+        add_embeds = self.add_time_embedding(y)
 
         time_emb = t_emb + add_embeds
 
         # 2. pre-process
-        height, width = sample.shape[2], sample.shape[3]
-        hidden_states = self.conv_in(sample)
-        text_emb = encoder_hidden_states if self.text_intermediate_proj is None \
-            else self.text_intermediate_proj(encoder_hidden_states)
+        hidden_states = self.conv_in(x)
+        text_emb = context if self.text_intermediate_proj is None \
+            else self.text_intermediate_proj(context)
         res_stack = [hidden_states]
 
         # 3. blocks
@@ -1911,7 +1905,7 @@ class SDXLUNet(PreTrainedModel):
             return custom_forward
 
         for i, block in enumerate(self.blocks):
-            if self.training and use_gradient_checkpointing and not (
+            if self.training and self.use_gradient_checkpointing and not (
                     isinstance(block, PushBlock) or isinstance(block, PopBlock)):
                 hidden_states, time_emb, text_emb, res_stack = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),

@@ -1,0 +1,19 @@
+import torch
+from diffsynth_engine.models.sdxl.sdxl_unet import SDXLUNet
+from tests.common.test_case import ImageTestCase
+
+
+class TextSDXLUNet(ImageTestCase):
+    def setUp(cls):
+        super().setUp()
+        model_path = cls.download_model("modelscope://muse/sd_xl_base_1.0?revision=20240425120250")
+        cls.unet = SDXLUNet.from_pretrained(model_path, device='cuda:0', dtype=torch.float16)
+
+    def test_sdxl_unet(self):
+        t = self.get_expect_tensor("sdxl/sdxl_unet.safetensors")        
+        sample = t["x"].to(device='cuda:0')
+        timestep = t["timesteps"].to(device='cuda:0')
+        encoder_hidden_states = t["context"].to(device='cuda:0')
+        y = t["y"].to(device='cuda:0')
+        output = self.unet(sample, timestep, encoder_hidden_states, y).to(device='cpu')        
+        self.assertTensorEqual(output, t["output"], atol=1e-3, rtol=1e-3)
