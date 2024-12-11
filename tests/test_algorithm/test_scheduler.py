@@ -9,7 +9,7 @@ class TestScheduler(ImageTestCase):
     def test_linear_scheduler(self):
         scheduler = ScaledLinearScheduler()
         sigmas, timesteps = scheduler.schedule(20)
-        expect_tensors = self.get_expect_tensor("alogrithm/scaled_linear_20steps.safetensors")
+        expect_tensors = self.get_expect_tensor("algorithm/scaled_linear_20steps.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
     
@@ -21,14 +21,14 @@ class TestScheduler(ImageTestCase):
         sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
         scheduler = RecifitedFlowScheduler(use_dynamic_shifting=True)
         sigmas, timesteps = scheduler.schedule(num_inference_steps, mu=calculate_shift(width//16 * height//16), sigmas=sigmas)
-        expect_tensors = self.get_expect_tensor("alogrithm/recifited_flow_20steps_flux.safetensors")
+        expect_tensors = self.get_expect_tensor("algorithm/recifited_flow_20steps_flux.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
 
         # SD3/SD3.5
         scheduler = RecifitedFlowScheduler(shift=3, use_dynamic_shifting=False)
         sigmas, timesteps = scheduler.schedule(20)
-        expect_tensors = self.get_expect_tensor("alogrithm/recifited_flow_20steps_sd3.safetensors")
+        expect_tensors = self.get_expect_tensor("algorithm/recifited_flow_20steps_sd3.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
     

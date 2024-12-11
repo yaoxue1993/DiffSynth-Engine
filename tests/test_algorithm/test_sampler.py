@@ -11,7 +11,7 @@ class TestSampler(ImageTestCase):
         sigmas, timesteps = scheduler.schedule(num_inference_steps)
         sampler = EulerSampler()
         sampler.initialize(None, timesteps, sigmas)
-        expect_tensor = self.get_expect_tensor("alogrithm/euler_i10.safetensors")
+        expect_tensor = self.get_expect_tensor("algorithm/euler_i10.safetensors")
         origin_sample = expect_tensor["origin_sample"]
         model_output = expect_tensor["model_output"]
         prev_sample = expect_tensor["prev_sample"]
@@ -29,7 +29,7 @@ class TestSampler(ImageTestCase):
         sampler = FlowMatchEulerSampler()
         sampler.initialize(None, timesteps, sigmas)
         
-        expect_tensor = self.get_expect_tensor("alogrithm/flow_match_euler_i10.safetensors")
+        expect_tensor = self.get_expect_tensor("algorithm/flow_match_euler_i10.safetensors")
         origin_sample = expect_tensor["origin_sample"]
         model_output = expect_tensor["model_output"]
         prev_sample = expect_tensor["prev_sample"]
