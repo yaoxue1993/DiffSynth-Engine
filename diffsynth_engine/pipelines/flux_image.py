@@ -216,33 +216,32 @@ class FluxImagePipeline(BasePipeline):
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
     ):
-        """
-        Args:
+        latents = self.generate_noise((1, 16, height // 8, width // 8), seed=seed,
+                                      device=self.device, dtype=self.dtype)
 
-            TODO: add details
-        """
-
-        # Tiler parameters
-        tiler_kwargs = {"tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride}
-
-        # Prepare noise scheduler and sampler
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
-        sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-        sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
-        self.sampler.initialize(None, sigmas, timesteps)
-
-        # Prepare latent tensors
+        # Prepare scheduler
         if input_image is not None:
+            # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
+            total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
+            sigmas = torch.linspace(1.0, 1 / total_steps, total_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigmas=sigmas)
+            t_start = max(total_steps - num_inference_steps, 0)
+            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
+            timesteps = timesteps[t_start:]
+
             self.load_models_to_device(['vae_encoder'])
+            noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image, **tiler_kwargs)
-            noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device=self.device,
-                                        dtype=self.dtype)
-            latents = self.sampler.step(latents, noise, 0)
+            latents = self.encode_image(image)
+            latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
-            latents = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device=self.device,
-                                          dtype=self.dtype)
+            sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
+
+        # Initialize sampler
+        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder_1', 'text_encoder_2'])
@@ -255,31 +254,29 @@ class FluxImagePipeline(BasePipeline):
 
         # Denoise
         self.load_models_to_device(['dit'])
-        for progress_id, timestep in enumerate(progress_bar_cmd(timesteps)):
+        for i, timestep in enumerate(progress_bar_cmd(timesteps)):
             timestep = timestep.unsqueeze(0).to(self.device)
 
             # Classifier-free guidance
             positive_noise_pred = self.predict_noise(
                 hidden_states=latents, timestep=timestep,
-                **positive_prompt_emb, **tiler_kwargs, **extra_input,
+                **positive_prompt_emb, **extra_input,
             )
             if cfg_scale != 1.0:
                 negative_noise_pred = self.predict_noise(
                     hidden_states=latents, timestep=timestep,
-                    **negative_prompt_emb, **tiler_kwargs, **extra_input,
+                    **negative_prompt_emb, **extra_input,
                 )
                 noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             else:
                 noise_pred = positive_noise_pred
 
             # Iterate
-            # TODO: error when progress_id == len(timesteps) - 1, fix it
-            if progress_id < len(timesteps) - 1:
-                latents = self.sampler.step(latents, noise_pred, progress_id)
+            latents = self.sampler.step(latents, noise_pred, i)
 
             # UI
             if progress_bar_st is not None:
-                progress_bar_st.progress(progress_id / len(timesteps))
+                progress_bar_st.progress(i / len(timesteps))
 
         # Decode image
         self.load_models_to_device(['vae_decoder'])

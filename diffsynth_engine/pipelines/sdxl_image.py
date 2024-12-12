@@ -221,13 +221,14 @@ class SDXLImagePipeline(BasePipeline):
             # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
             total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
             sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
+            t_start = max(total_steps - num_inference_steps, 0)
+            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
+            timesteps = timesteps[t_start:]
+
             self.load_models_to_device(['vae_encoder'])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
-            t_start = max(total_steps - num_inference_steps, 0)
-            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
-            timesteps = timesteps[t_start:]
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
             sigmas, timesteps = self.noise_scheduler.schedule(
