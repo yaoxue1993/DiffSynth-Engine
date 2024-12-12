@@ -47,7 +47,7 @@ class BasePipeline:
     @staticmethod
     def generate_noise(shape, seed=None, device="cpu", dtype=torch.float16):
         generator = None if seed is None else torch.Generator(device).manual_seed(seed)
-        noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
+        noise = torch.randn(shape, generator=generator, device=device).to(dtype)
         return noise
 
     def eval(self):

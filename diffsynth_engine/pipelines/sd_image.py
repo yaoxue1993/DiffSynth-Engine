@@ -1,35 +1,33 @@
 import os
 import torch
-from typing import Callable, Dict, List
+import logging
+from typing import Callable, Dict, Union, Optional, List
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
-from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
+from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
-from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
+from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
 
-# TODO: add controlnet/ipadapter/kolors
-class SDXLImagePipeline(BasePipeline):
+class SDImagePipeline(BasePipeline):
 
     def __init__(self,
                  tokenizer: CLIPTokenizer,
-                 tokenizer_2: CLIPTokenizer,
-                 text_encoder: SDXLTextEncoder,
-                 text_encoder_2: SDXLTextEncoder2,
-                 unet: SDXLUNet,
-                 vae_decoder: SDXLVAEDecoder,
-                 vae_encoder: SDXLVAEEncoder,
+                 text_encoder: SDTextEncoder,
+                 unet: SDUNet,
+                 vae_decoder: SDVAEDecoder,
+                 vae_encoder: SDVAEEncoder,
                  batch_cfg: bool = True,
                  device: str = "cuda",
                  dtype: torch.dtype = torch.float16
@@ -39,23 +37,18 @@ class SDXLImagePipeline(BasePipeline):
         self.sampler = EulerSampler()
         # models
         self.tokenizer = tokenizer
-        self.tokenizer_2 = tokenizer_2
         self.text_encoder = text_encoder
-        self.text_encoder_2 = text_encoder_2
         self.unet = unet
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
-        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
-                                               device=device, dtype=dtype)
         self.batch_cfg = batch_cfg
-        self.model_names = ['text_encoder', 'text_encoder_2',
-                            'unet', 'vae_decoder', 'vae_encoder']
+        self.model_names = ['text_encoder','unet', 'vae_decoder', 'vae_encoder']
 
     @classmethod
     def from_pretrained(cls, pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
                         device: str = 'cuda:0', dtype: torch.dtype = torch.float16,
                         cpu_offload: bool = False,
-                        batch_cfg: bool = True) -> "SDXLImagePipeline":
+                        batch_cfg: bool = True) -> "SDImagePipeline":
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
@@ -72,23 +65,18 @@ class SDXLImagePipeline(BasePipeline):
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
-        tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
-        text_encoder = SDXLTextEncoder.from_state_dict(
+        text_encoder = SDTextEncoder.from_state_dict(
             loaded_state_dict, device=init_device, dtype=dtype)
-        text_encoder_2 = SDXLTextEncoder2.from_state_dict(
+        unet = SDUNet.from_state_dict(
             loaded_state_dict, device=init_device, dtype=dtype)
-        unet = SDXLUNet.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
-        vae_decoder = SDXLVAEDecoder.from_state_dict(
+        vae_decoder = SDVAEDecoder.from_state_dict(
             loaded_state_dict, device=init_device, dtype=torch.float32)
-        vae_encoder = SDXLVAEEncoder.from_state_dict(
+        vae_encoder = SDVAEEncoder.from_state_dict(
             loaded_state_dict, device=init_device, dtype=torch.float32)
 
         pipe = cls(
             tokenizer=tokenizer,
-            tokenizer_2=tokenizer_2,
             text_encoder=text_encoder,
-            text_encoder_2=text_encoder_2,
             unet=unet,
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
@@ -102,7 +90,7 @@ class SDXLImagePipeline(BasePipeline):
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16) -> "SDXLImagePipeline":
+                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16) -> "SDImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):
@@ -120,39 +108,8 @@ class SDXLImagePipeline(BasePipeline):
     def encode_prompt(self, prompt, clip_skip):
         input_ids = tokenize_long_prompt(
             self.tokenizer, prompt).to(self.device)
-        prompt_emb_1 = self.text_encoder(input_ids, clip_skip=clip_skip)
-
-        input_ids_2 = tokenize_long_prompt(
-            self.tokenizer_2, prompt).to(self.device)
-        prompt_emb_2, add_text_embeds = self.text_encoder_2(
-            input_ids_2, clip_skip=clip_skip)
-
-        # Merge
-        if prompt_emb_1.shape[0] != prompt_emb_2.shape[0]:
-            max_batch_size = min(prompt_emb_1.shape[0], prompt_emb_2.shape[0])
-            prompt_emb_1 = prompt_emb_1[: max_batch_size]
-            prompt_emb_2 = prompt_emb_2[: max_batch_size]
-        prompt_emb = torch.concatenate([prompt_emb_1, prompt_emb_2], dim=-1)
-
-        # For very long prompt, we only use the first 77 tokens to compute `add_text_embeds`.
-        add_text_embeds = add_text_embeds[0:1]
-        prompt_emb = prompt_emb.reshape(
-            (1, prompt_emb.shape[0] * prompt_emb.shape[1], -1))
-
-        return prompt_emb, add_text_embeds
-
-    def prepare_extra_input(self, latents):
-        height, width = latents.shape[2] * 8, latents.shape[3] * 8
-        add_time_id = torch.tensor(
-            [height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
-        return add_time_id
-
-    def prepare_add_embeds(self, add_text_embeds, add_time_id, dtype):
-        time_embeds = self.add_time_proj(add_time_id)
-        time_embeds = time_embeds.reshape((add_text_embeds.shape[0], -1))
-        add_embeds = torch.concat([add_text_embeds, time_embeds], dim=-1)
-        add_embeds = add_embeds.to(dtype)
-        return add_embeds
+        prompt_emb = self.text_encoder(input_ids, clip_skip=clip_skip)
+        return prompt_emb
 
     def predict_noise_with_cfg(
         self,
@@ -160,35 +117,29 @@ class SDXLImagePipeline(BasePipeline):
         timestep: torch.Tensor,
         positive_prompt_emb: torch.Tensor,
         negative_prompt_emb: torch.Tensor,
-        positive_add_text_embeds: torch.Tensor,
-        negative_add_text_embeds: torch.Tensor,
-        add_time_id: torch.Tensor,
         cfg_scale: float,
         batch_cfg: bool = True
     ):
         if cfg_scale < 1.0:
-            return self.predict_noise(latents, timestep, positive_prompt_emb, add_time_id)
+            return self.predict_noise(latents, timestep, positive_prompt_emb)
         if not batch_cfg:
             # cfg by predict noise one by one
-            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, add_time_id)
-            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, negative_add_text_embeds, add_time_id)
+            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb)
+            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb)
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
         else:
             # cfg by predict noise in one batch
-            add_time_ids = torch.cat([add_time_id, add_time_id], dim=0)
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
-            add_text_embeds = torch.cat([positive_add_text_embeds, negative_add_text_embeds], dim=0)
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)            
-            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, add_text_embeds, add_time_ids)
+            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb).chunk(2)
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
-    def predict_noise(self, latents, timestep, prompt_emb, add_text_embeds, add_time_id):
-        y = self.prepare_add_embeds(add_text_embeds, add_time_id, self.dtype)
+    def predict_noise(self, latents, timestep, prompt_emb):
         noise_pred = self.unet(
-            x=latents, timestep=timestep, y=y,
+            x=latents, timestep=timestep,
             context=prompt_emb,
             device=self.device,
         )
@@ -200,8 +151,8 @@ class SDXLImagePipeline(BasePipeline):
             prompt: str,
             negative_prompt: str = "",
             cfg_scale: float = 7.5,
-            clip_skip: int = 2,
-            input_image: Image.Image | None = None,
+            clip_skip: int = 1,
+            input_image: Optional[Image.Image] = None,
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
@@ -213,9 +164,8 @@ class SDXLImagePipeline(BasePipeline):
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
     ):
-        latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                      dtype=self.dtype)
-
+        
+        latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
         # Prepare scheduler
         if input_image is not None:
             # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
@@ -242,11 +192,8 @@ class SDXLImagePipeline(BasePipeline):
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
-        positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
-
-        # Prepare extra input
-        add_time_id = self.prepare_extra_input(latents)
+        positive_prompt_emb = self.encode_prompt(prompt, clip_skip=clip_skip)
+        negative_prompt_emb = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
 
         # Denoise
         self.load_models_to_device(['unet'])
@@ -258,9 +205,6 @@ class SDXLImagePipeline(BasePipeline):
                 timestep=timestep,
                 positive_prompt_emb=positive_prompt_emb, 
                 negative_prompt_emb=negative_prompt_emb,
-                positive_add_text_embeds=positive_add_text_embeds, 
-                negative_add_text_embeds=negative_add_text_embeds,
-                add_time_id=add_time_id, 
                 cfg_scale=cfg_scale, 
                 batch_cfg=self.batch_cfg
             )

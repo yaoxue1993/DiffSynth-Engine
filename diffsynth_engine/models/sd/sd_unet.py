@@ -887,13 +887,13 @@ class SDUNet(PreTrainedModel):
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(320, 4, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-    def forward(self, sample, timestep, encoder_hidden_states, **kwargs):
+    def forward(self, x, timestep, context, **kwargs):
         # 1. time
-        time_emb = self.time_embedding(timestep, dtype=sample.dtype)
+        time_emb = self.time_embedding(timestep, dtype=x.dtype)
 
         # 2. pre-process
-        hidden_states = self.conv_in(sample)
-        text_emb = encoder_hidden_states
+        hidden_states = self.conv_in(x)
+        text_emb = context
         res_stack = [hidden_states]
 
         # 3. blocks
