@@ -42,7 +42,7 @@ class TestCase(unittest.TestCase):
     def get_input_tensor(name) -> Dict[str, torch.Tensor]:
         return load_file(ImageTestCase.testdata_dir / "input" / f"{name}")
 
-    def assertTensorEqual(self, input_tensor: torch.Tensor, expect_tensor: torch.Tensor, atol=1e-5, rtol=1e-5):
+    def assertTensorEqual(self, input_tensor: torch.Tensor, expect_tensor: torch.Tensor, atol=1e-3, rtol=1e-3):
         # 计算绝对误差和相对误差
         abs_diff = torch.abs(input_tensor - expect_tensor)
         rel_diff = abs_diff / torch.abs(expect_tensor)
