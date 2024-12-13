@@ -9,18 +9,17 @@ from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 
 
 class TestSDXLVAE(ImageTestCase):
-
-    def setUp(self):
-        super().setUp()
-        self._sdxl_model_path = download_model(
+    @classmethod
+    def setUpClass(cls):
+        cls.model_path = cls.download_model(
             "modelscope://muse/sd_xl_base_1.0?revision=20240425120250&endpoint=www.modelscope.cn")
-        loaded_state_dict = load_file(self._sdxl_model_path)
-        self.encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.latent_channels = 4
-        self.shift_factor = 0
-        self.scaling_factor = 0.13025
-        self._input_image = self.get_input_image("wukong_1024_1024.png").convert("RGB")
+        loaded_state_dict = load_file(cls.model_path)
+        cls.encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.latent_channels = 4
+        cls.shift_factor = 0
+        cls.scaling_factor = 0.13025
+        cls._input_image = cls.get_input_image("wukong_1024_1024.png").convert("RGB")
 
     def test_encode(self):
         expected_tensor = self.get_expect_tensor("sdxl/sdxl_vae.safetensors")

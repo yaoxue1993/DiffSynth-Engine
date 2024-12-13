@@ -4,9 +4,9 @@ from diffsynth_engine.models.sd.sd_unet import SDUNet
 from tests.common.test_case import ImageTestCase
 
 
-class TextSDUNet(ImageTestCase):
-    def setUp(cls):
-        super().setUp()
+class TestSDUNet(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
         model_path = cls.download_model("modelscope://muse/v1-5-pruned-emaonly?revision=20240118200020")
         cls.unet = SDUNet.from_pretrained(model_path, device='cuda:0', dtype=torch.float16)
 

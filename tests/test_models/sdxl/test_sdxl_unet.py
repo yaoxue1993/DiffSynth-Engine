@@ -4,9 +4,9 @@ from diffsynth_engine.models.sdxl.sdxl_unet import SDXLUNet
 from tests.common.test_case import ImageTestCase
 
 
-class TextSDXLUNet(ImageTestCase):
-    def setUp(cls):
-        super().setUp()
+class TestSDXLUNet(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
         model_path = cls.download_model("modelscope://muse/sd_xl_base_1.0?revision=20240425120250")
         cls.unet = SDXLUNet.from_pretrained(model_path, device='cuda:0', dtype=torch.float16)
 

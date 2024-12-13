@@ -9,17 +9,16 @@ from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 
 
 class TestSDVAE(ImageTestCase):
-
-    def setUp(self):
-        super().setUp()
-        self._sd_model_path = download_model("modelscope://muse/v1-5-pruned-emaonly?revision=20240118200020")
-        loaded_state_dict = load_file(self._sd_model_path)
-        self.encoder = SDVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.decoder = SDVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.latent_channels = 4
-        self.shift_factor = 0
-        self.scaling_factor = 0.18215
-        self._input_image = self.get_input_image("wukong_1024_1024.png").convert("RGB")
+    @classmethod
+    def setUpClass(cls):
+        cls.model_path = cls.download_model("modelscope://muse/v1-5-pruned-emaonly?revision=20240118200020")
+        loaded_state_dict = load_file(cls.model_path)
+        cls.encoder = SDVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.decoder = SDVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.latent_channels = 4
+        cls.shift_factor = 0
+        cls.scaling_factor = 0.18215
+        cls._input_image = cls.get_input_image("wukong_1024_1024.png").convert("RGB")
 
     def test_encode(self):
         expected_tensor = self.get_expect_tensor("sd/sd_vae.safetensors")

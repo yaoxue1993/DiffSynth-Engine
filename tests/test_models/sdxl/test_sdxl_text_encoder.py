@@ -10,26 +10,25 @@ from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
 class TestSDXLTextEncoder(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tokenizer_1 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
+        cls.tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
 
-    def setUp(self):
-        super().setUp()
-        self.tokenizer_1 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
-        self.tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
-
-        self._sdxl_model_path = download_model(
+        cls.model_path = cls.download_model(
             "modelscope://muse/sd_xl_base_1.0?revision=20240425120250&endpoint=www.modelscope.cn")
-        loaded_state_dict = load_file(self._sdxl_model_path)
-        self.text_encoder_1 = SDXLTextEncoder.from_state_dict(loaded_state_dict,
+        loaded_state_dict = load_file(cls.model_path)
+        cls.text_encoder_1 = SDXLTextEncoder.from_state_dict(loaded_state_dict,
                                                               device='cuda:0', dtype=torch.float16).eval()
-        self.text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict,
+        cls.text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict,
                                                                device='cuda:0', dtype=torch.float16).eval()
-        self.clip_skip = 2
-        self.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
+        cls.clip_skip = 2
+        cls.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
 
     def test_encoder_1(self):
         text_ids = self.tokenizer_1(self.texts)["input_ids"].to(device='cuda:0')
         with torch.no_grad():
-            embeds = self.text_encoder_1(text_ids).cpu()
+            embeds = self.text_encoder_1(text_ids, clip_skip=self.clip_skip).cpu()
         expected_tensors = self.get_expect_tensor("sdxl/sdxl_text_encoder_1.safetensors")
         expected_embeds = expected_tensors["embeds"]
         self.assertTensorEqual(embeds, expected_embeds)
@@ -37,7 +36,7 @@ class TestSDXLTextEncoder(TestCase):
     def test_encoder_2(self):
         text_ids = self.tokenizer_2(self.texts)["input_ids"].to(device='cuda:0')
         with torch.no_grad():
-            embeds, pooled_embeds = self.text_encoder_2(text_ids)
+            embeds, pooled_embeds = self.text_encoder_2(text_ids, clip_skip=self.clip_skip)
             embeds, pooled_embeds = embeds.cpu(), pooled_embeds.cpu()
         expected_tensors = self.get_expect_tensor("sdxl/sdxl_text_encoder_2.safetensors")
         expected_embeds = expected_tensors["embeds"]
@@ -69,7 +68,7 @@ class TestSDXLTextEncoder(TestCase):
         with torch.no_grad():
             model_output = clip_l_model(text_ids, output_hidden_states=True)
             expected_embeds = model_output.hidden_states[-self.clip_skip]
-            embeds = self.text_encoder_1(text_ids)
+            embeds = self.text_encoder_1(text_ids, clip_skip=self.clip_skip)
         self.assertTensorEqual(embeds, expected_embeds)
 
         expect = {"embeds": embeds}
@@ -145,7 +144,7 @@ class TestSDXLTextEncoder(TestCase):
             model_output = clip_g_model(text_ids, output_hidden_states=True)
             expected_embeds = model_output.hidden_states[-self.clip_skip]
             expected_pooled_embeds = model_output.text_embeds
-            embeds, pooled_embeds = self.text_encoder_2(text_ids)
+            embeds, pooled_embeds = self.text_encoder_2(text_ids, clip_skip=self.clip_skip)
         self.assertTensorEqual(embeds, expected_embeds)
         self.assertTensorEqual(pooled_embeds, expected_pooled_embeds)
 

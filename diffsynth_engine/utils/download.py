@@ -120,14 +120,12 @@ def _find_modelscope_model_file_path(download_path: str, model_url: str) -> str:
 
     config_json_path = os.path.join(download_path, "configuration.json")
     if not os.path.exists(config_json_path) or not os.path.isfile(config_json_path):
-        raise ValueError(
-            f"Invalid model format, {config_json_path} not exists or not a file, model_url: {model_url}")
+        return download_path
 
     with open(config_json_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
         if "model_file_location" not in config:
-            raise ValueError(
-                f"Invalid configuration, cannot find `model_file_location` in {config_json_path}, model_url: {model_url}")
+            return download_path
         model_file_path = os.path.join(download_path, config["model_file_location"])
         if not os.path.exists(model_file_path):
             raise ValueError(f"Model file not exists, model_url: {model_url}, configuration: {config}")

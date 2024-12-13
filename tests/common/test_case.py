@@ -45,7 +45,7 @@ class TestCase(unittest.TestCase):
     def assertTensorEqual(self, input_tensor: torch.Tensor, expect_tensor: torch.Tensor, atol=1e-3, rtol=1e-3):
         # 计算绝对误差和相对误差
         abs_diff = torch.abs(input_tensor - expect_tensor)
-        rel_diff = abs_diff / torch.abs(expect_tensor)
+        rel_diff = abs_diff / (torch.abs(expect_tensor))
         # 计算平均绝对误差和相对误差
         mean_abs_diff = torch.mean(abs_diff).item()
         mean_rel_diff = torch.mean(rel_diff).item()
