@@ -5,7 +5,7 @@ from .stable_diffusion.exponential import ExponentialScheduler
 from .flow_match.recifited_flow import RecifitedFlowScheduler
 
 __all__ = [
-    "StableDiffusionScheduler",
+    "ScaledLinearScheduler",
     "BetaScheduler",
     "KarrasScheduler",
     "ExponentialScheduler",

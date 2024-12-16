@@ -494,10 +494,13 @@ class FluxDiT(PreTrainedModel):
         if image_ids is None:
             image_ids = self.prepare_image_ids(hidden_states)
 
-        conditioning = self.time_embedder(timestep, hidden_states.dtype) + self.pooled_text_embedder(pooled_prompt_emb)
+        # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
+        # addition of floating point numbers does not meet commutative law
+        conditioning = self.time_embedder(timestep, hidden_states.dtype)
         if self.guidance_embedder is not None:
             guidance = guidance * 1000
-            conditioning = conditioning + self.guidance_embedder(guidance, hidden_states.dtype)
+            conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
+        conditioning += self.pooled_text_embedder(pooled_prompt_emb)
         prompt_emb = self.context_embedder(prompt_emb)
         image_rotary_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
 
