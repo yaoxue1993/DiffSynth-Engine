@@ -327,7 +327,7 @@ class TestSDXLVAE(ImageTestCase):
                             use_quant_conv=True,
                             use_post_quant_conv=True)
         vae = vae.to(device='cuda:0', dtype=torch.float32).eval()
-        loaded_state_dict = load_file(self._sdxl_model_path)
+        loaded_state_dict = load_file(self.model_path)
         vae.load_state_dict(_convert(loaded_state_dict))
 
         image_tensor = torch.tensor(np.array(self._input_image, dtype=np.float32) * (2 / 255) - 1)

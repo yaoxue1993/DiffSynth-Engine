@@ -119,7 +119,7 @@ class SDXLImagePipeline(BasePipeline):
 
     def encode_prompt(self, prompt, clip_skip):
         input_ids = tokenize_long_prompt(
-            self.tokenizer, prompt).to(self.device)
+            self.tokenizer, prompt).to(self.device)        
         prompt_emb_1 = self.text_encoder(input_ids, clip_skip=clip_skip)
 
         input_ids_2 = tokenize_long_prompt(
@@ -141,10 +141,13 @@ class SDXLImagePipeline(BasePipeline):
 
         return prompt_emb, add_text_embeds
 
-    def prepare_extra_input(self, latents):
+    def prepare_add_time_id(self, latents):
         height, width = latents.shape[2] * 8, latents.shape[3] * 8
         add_time_id = torch.tensor(
             [height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
+        # original_size_as_tuple(height, width)
+        # crop_coords_top_left(0, 0)
+        # target_size_as_tuple(height, width)
         return add_time_id
 
     def prepare_add_embeds(self, add_text_embeds, add_time_id, dtype):
@@ -244,10 +247,13 @@ class SDXLImagePipeline(BasePipeline):
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
-
+        if negative_prompt != "":
+            negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
+        else:
+            negative_prompt_emb, negative_add_text_embeds = torch.zeros_like(positive_prompt_emb), torch.zeros_like(positive_add_text_embeds)
+        
         # Prepare extra input
-        add_time_id = self.prepare_extra_input(latents)
+        add_time_id = self.prepare_add_time_id(latents)
 
         # Denoise
         self.load_models_to_device(['unet'])

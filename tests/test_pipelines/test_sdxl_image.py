@@ -9,7 +9,7 @@ class TestSDXLImage(ImageTestCase):
 
     def test_txt2img(self):
         image = self.pipe(
-            prompt="beautiful girl",
+            prompt="a beautiful girl",
             width=1024,
             height=1024,
             num_inference_steps=20,
@@ -17,4 +17,4 @@ class TestSDXLImage(ImageTestCase):
             clip_skip=2,
         )
 
-        self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_txt2img.png", threshold=0.93)
+        self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_txt2img.png", threshold=0.99)
