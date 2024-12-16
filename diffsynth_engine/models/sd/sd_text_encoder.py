@@ -298,14 +298,16 @@ class SDTextEncoder(PreTrainedModel):
         return mask
 
     def forward(self, input_ids, clip_skip=1):
-        clip_skip = max(clip_skip, 1)
+        clip_skip = max(clip_skip, 1)        
         embeds = self.token_embedding(input_ids) + self.position_embeds
         attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
+
         for encoder_id, encoder in enumerate(self.encoders):
             embeds = encoder(embeds, attn_mask=attn_mask)
             if encoder_id + clip_skip == len(self.encoders):
                 break
-        embeds = self.final_layer_norm(embeds)
+        if clip_skip == 1:
+            embeds = self.final_layer_norm(embeds)
         return embeds
 
     @classmethod

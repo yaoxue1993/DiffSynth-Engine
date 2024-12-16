@@ -7,7 +7,6 @@ from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
-import os
 
 
 class TestSDTextEncoder(TestCase):
@@ -20,7 +19,7 @@ class TestSDTextEncoder(TestCase):
         cls.text_encoder = SDTextEncoder.from_state_dict(loaded_state_dict,
                                                               device='cuda:0', dtype=torch.float16).eval()
         cls.clip_skip = 1
-        cls.texts = ["Hello, World!"]
+        cls.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]        
 
     def test_encoder(self):
         text_ids = self.tokenizer(self.texts)["input_ids"].to(device='cuda:0')
@@ -33,29 +32,34 @@ class TestSDTextEncoder(TestCase):
 
     @unittest.skipUnless(RUN_EXTRA_TEST, "RUN_EXTRA_TEST is not set")
     def test_encoder_and_save_tensors(self):
+        def _convert(state_dict):
+            new_state_dict = {}
+            for key, param in state_dict.items():
+                if key.startswith("cond_stage_model.transformer.") and not key.endswith(".position_ids"):
+                    key = key.replace("cond_stage_model.transformer.", "")
+                    new_state_dict[key] = param
+            return new_state_dict
         from transformers.models.clip import CLIPTextModel, CLIPTextConfig
-        clip_l_config = {
-            "bos_token_id": 0,
-            "pad_token_id": 1,            
-            "eos_token_id": 2,
-            "num_attention_heads": 12,
-            "hidden_size": 768,            
-            "intermediate_size": 3072,
-            "projection_dim": 768,
-        }
-        config = CLIPTextConfig(**clip_l_config)
+        config = CLIPTextConfig(
+            hidden_size=768,
+            intermediate_size=3072,
+            projection_dim=768,
+            num_hidden_layers=12,
+            num_attention_heads=12,
+            hidden_act="quick_gelu",
+            eos_token_id=2
+        )
         clip_l_model = CLIPTextModel(config).to(device='cuda:0', dtype=torch.float16).eval()
-
-        model_path = self.download_model("modelscope://AI-ModelScope/stable-diffusion-v1-5?revision=master")
-        model_path = os.path.join(model_path, "text_encoder/model.safetensors")
-        loaded_state_dict = load_file(model_path)
-        del loaded_state_dict['text_model.embeddings.position_ids']
-        clip_l_model.load_state_dict(loaded_state_dict)
+        loaded_state_dict = load_file(self.model_path)
+        clip_l_model.load_state_dict(_convert(loaded_state_dict))
 
         text_ids = self.tokenizer(self.texts)["input_ids"].to(device='cuda:0')
         with torch.no_grad():
             model_output = clip_l_model(text_ids, output_hidden_states=True)
-            expected_embeds = model_output.hidden_states[-self.clip_skip]
+            if self.clip_skip == 1:
+                expected_embeds = model_output.last_hidden_state
+            else:
+                expected_embeds = model_output.hidden_states[-self.clip_skip]
             embeds = self.text_encoder(text_ids, clip_skip=self.clip_skip)
 
         self.assertTensorEqual(embeds, expected_embeds)

@@ -59,9 +59,10 @@ class TestSDXLTextEncoder(TestCase):
             num_hidden_layers=12,
             num_attention_heads=12,
             hidden_act="quick_gelu",
+            eos_token_id=2
         )
         clip_l_model = CLIPTextModel(config).to(device='cuda:0', dtype=torch.float16).eval()
-        loaded_state_dict = load_file(self._sdxl_model_path)
+        loaded_state_dict = load_file(self.model_path)
         clip_l_model.load_state_dict(_convert(loaded_state_dict))
 
         text_ids = self.tokenizer_1(self.texts)["input_ids"].to(device='cuda:0')
@@ -134,9 +135,10 @@ class TestSDXLTextEncoder(TestCase):
             num_hidden_layers=32,
             num_attention_heads=20,
             hidden_act="gelu",
+            eos_token_id=2
         )
         clip_g_model = CLIPTextModelWithProjection(config).to(device='cuda:0', dtype=torch.float16).eval()
-        load_state_dict = load_file(self._sdxl_model_path)
+        load_state_dict = load_file(self.model_path)
         clip_g_model.load_state_dict(_convert(load_state_dict))
 
         text_ids = self.tokenizer_2(self.texts)["input_ids"].to(device='cuda:0')

@@ -1,10 +1,7 @@
 torch>=2.4.0
-xformers
-cupy-cuda12x
 safetensors
 einops
 ftfy
 sentencepiece
 pydantic
-huggingface-hub
 modelscope
