@@ -45,7 +45,7 @@ class FluxImagePipeline(BasePipeline):
                  device: str = 'cuda:0',
                  dtype: torch.dtype = torch.bfloat16):
         super().__init__(device=device, dtype=dtype)
-        self.noise_scheduler = RecifitedFlowScheduler()
+        self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
         # models
         self.tokenizer = tokenizer
@@ -168,11 +168,13 @@ class FluxImagePipeline(BasePipeline):
         if image_ids is None:
             image_ids = self.dit.prepare_image_ids(hidden_states)
 
-        conditioning = self.dit.time_embedder(timestep, hidden_states.dtype) + self.dit.pooled_text_embedder(
-            pooled_prompt_emb)
+        # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
+        # addition of floating point numbers does not meet commutative law
+        conditioning = self.dit.time_embedder(timestep, hidden_states.dtype)
         if self.dit.guidance_embedder is not None:
             guidance = guidance * 1000
-            conditioning = conditioning + self.dit.guidance_embedder(guidance, hidden_states.dtype)
+            conditioning += self.dit.guidance_embedder(guidance, hidden_states.dtype)
+        conditioning += self.dit.pooled_text_embedder(pooled_prompt_emb)
         prompt_emb = self.dit.context_embedder(prompt_emb)
         image_rotary_emb = self.dit.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
 
@@ -217,7 +219,7 @@ class FluxImagePipeline(BasePipeline):
             progress_bar_st: ModuleType | None = None,
     ):
         latents = self.generate_noise((1, 16, height // 8, width // 8), seed=seed,
-                                      device=self.device, dtype=self.dtype)
+                                      device="cpu", dtype=self.dtype).to(device=self.device)
 
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
@@ -239,6 +241,7 @@ class FluxImagePipeline(BasePipeline):
         else:
             sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
             sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
+        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
 
         # Initialize sampler
         self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
@@ -255,7 +258,7 @@ class FluxImagePipeline(BasePipeline):
         # Denoise
         self.load_models_to_device(['dit'])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
-            timestep = timestep.unsqueeze(0).to(self.device)
+            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
 
             # Classifier-free guidance
             positive_noise_pred = self.predict_noise(

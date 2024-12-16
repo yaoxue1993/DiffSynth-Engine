@@ -234,15 +234,14 @@ class SDXLImagePipeline(BasePipeline):
             latents = self.encode_image(image)
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
-            sigmas, timesteps = self.noise_scheduler.schedule(
-                num_inference_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
             # k-diffusion
             # if you have any questions about this, please ask @dizhipeng.dzp for more details
             latents = latents * sigmas[0] / ((sigmas[0] ** 2 + 1) ** 0.5)
+        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
 
         # Initialize sampler
-        self.sampler.initialize(
-            latents=latents, timesteps=timesteps, sigmas=sigmas)
+        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
@@ -259,7 +258,7 @@ class SDXLImagePipeline(BasePipeline):
         # Denoise
         self.load_models_to_device(['unet'])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
-            timestep = timestep.unsqueeze(0).to(self.device)
+            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents, 
