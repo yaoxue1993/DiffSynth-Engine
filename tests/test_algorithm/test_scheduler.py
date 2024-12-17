@@ -1,7 +1,7 @@
 import unittest
 import torch
 from ..common.test_case import ImageTestCase
-from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
+from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler
 from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import RecifitedFlowScheduler
 from diffsynth_engine.pipelines.flux_image import calculate_shift
 
@@ -12,7 +12,28 @@ class TestScheduler(ImageTestCase):
         expect_tensors = self.get_expect_tensor("algorithm/scaled_linear_20steps.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
-    
+
+    def test_karras_scheduler(self):
+        scheduler = KarrasScheduler()
+        sigmas, timesteps = scheduler.schedule(20)
+        expect_tensors = self.get_expect_tensor("algorithm/karras_20steps.safetensors")
+        self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
+        self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
+
+    def test_exponential_scheduler(self):
+        scheduler = ExponentialScheduler()
+        sigmas, timesteps = scheduler.schedule(20)
+        expect_tensors = self.get_expect_tensor("algorithm/exponential_20steps.safetensors")
+        self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
+        self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
+
+    def test_beta_scheduler(self):
+        scheduler = BetaScheduler()
+        sigmas, timesteps = scheduler.schedule(20)
+        expect_tensors = self.get_expect_tensor("algorithm/beta_20steps.safetensors")        
+        self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
+        self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
+
     def test_recifited_flow_scheduler(self):
         # FLUX
         width = 1024

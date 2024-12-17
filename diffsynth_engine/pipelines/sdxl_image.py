@@ -250,6 +250,7 @@ class SDXLImagePipeline(BasePipeline):
         if negative_prompt != "":
             negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
         else:
+            # from automatic1111/stable-diffusion-webui            
             negative_prompt_emb, negative_add_text_embeds = torch.zeros_like(positive_prompt_emb), torch.zeros_like(positive_add_text_embeds)
         
         # Prepare extra input
