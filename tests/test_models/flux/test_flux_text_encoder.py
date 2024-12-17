@@ -5,28 +5,27 @@ from safetensors.torch import load_file, save_file
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
-from diffsynth_engine.utils.download import download_model, ensure_directory_exists
+from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
 class TestFluxTextEncoder(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tokenizer_1 = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+        cls.tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
 
-    def setUp(self):
-        super().setUp()
-        self.tokenizer_1 = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
-        self.tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
-
-        self._clip_l_model_path = download_model(
+        cls._clip_l_model_path = cls.download_model(
             "modelscope://muse/flux_clip_l?revision=20241209&endpoint=www.modelscope.cn")
-        self._t5_model_path = download_model(
+        cls._t5_model_path = cls.download_model(
             "modelscope://muse/google_t5_v1_1_xxl?revision=20241024105236&endpoint=www.modelscope.cn")
-        loaded_state_dict = load_file(self._clip_l_model_path)
-        self.text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict,
+        loaded_state_dict = load_file(cls._clip_l_model_path)
+        cls.text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict,
                                                                device='cuda:0', dtype=torch.bfloat16).eval()
-        loaded_state_dict = load_file(self._t5_model_path)
-        self.text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict,
+        loaded_state_dict = load_file(cls._t5_model_path)
+        cls.text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict,
                                                                device='cuda:0', dtype=torch.bfloat16).eval()
-        self.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
+        cls.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
 
     def test_encoder_1(self):
         text_ids = self.tokenizer_1(self.texts)["input_ids"].to(device='cuda:0')

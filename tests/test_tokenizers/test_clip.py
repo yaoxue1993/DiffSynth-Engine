@@ -7,9 +7,9 @@ from tests.common.test_case import TestCase
 
 class TestCLIPTokenizer(TestCase):
 
-    def setUp(self):
-        super().setUp()
-        self.tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
+    @classmethod
+    def setUpClass(cls):
+        cls.tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
 
     def test_tokenize(self):
         cases = [

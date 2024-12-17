@@ -4,23 +4,22 @@ import numpy as np
 from safetensors.torch import load_file, save_file
 
 from diffsynth_engine.models.flux import FluxVAEEncoder, FluxVAEDecoder
-from diffsynth_engine.utils.download import download_model, ensure_directory_exists
+from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 
 
 class TestFluxVAE(ImageTestCase):
-
-    def setUp(self):
-        super().setUp()
-        self._vae_model_path = download_model(
+    @classmethod
+    def setUpClass(cls):
+        cls._vae_model_path = cls.download_model(
             "modelscope://muse/flux_vae?revision=20241015120836&endpoint=www.modelscope.cn")
-        loaded_state_dict = load_file(self._vae_model_path)
-        self.encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
-        self.latent_channels = 16
-        self.shift_factor = 0.1159
-        self.scaling_factor = 0.3611
-        self._input_image = self.get_input_image("wukong_1024_1024.png").convert("RGB")
+        loaded_state_dict = load_file(cls._vae_model_path)
+        cls.encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
+        cls.latent_channels = 16
+        cls.shift_factor = 0.1159
+        cls.scaling_factor = 0.3611
+        cls._input_image = cls.get_input_image("wukong_1024_1024.png").convert("RGB")
 
     def test_encode(self):
         expected_tensor = self.get_expect_tensor("flux/flux_vae.safetensors")
