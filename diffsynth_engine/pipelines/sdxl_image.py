@@ -1,11 +1,13 @@
 import os
+import re
 import torch
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
+from diffsynth_engine.models.base import LoRAStateDictConverter, LoRAStateDictType
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
 from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
 from diffsynth_engine.pipelines import BasePipeline
@@ -15,13 +17,84 @@ from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
+from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
+from diffsynth_engine.conf.keymap import sdxl_civitai_unet_keymap, split_key
 
 logger = logging.get_logger(__name__)
 
 
+
+class SDXLLoRAConverter(LoRAStateDictConverter):
+    def _replace_kohya_te1_key(self, key):
+        key = key.replace("lora_te1_text_model_encoder_layers_", "encoders.")
+        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = key.replace("mlp_fc1", "fc1")
+        key = key.replace("mlp_fc2", "fc2")
+        key = key.replace("self_attn_q_proj", "attn.to_q")
+        key = key.replace("self_attn_k_proj", "attn.to_k")
+        key = key.replace("self_attn_v_proj", "attn.to_v")
+        key = key.replace("self_attn_out_proj", "attn.to_out")
+        return key
+
+    def _replace_kohya_te2_key(self, key):
+        key = key.replace("lora_te2_text_model_encoder_layers_", "encoders.")
+        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = key.replace("mlp_fc1", "fc1")
+        key = key.replace("mlp_fc2", "fc2")
+        key = key.replace("self_attn_q_proj", "attn.to_q")
+        key = key.replace("self_attn_k_proj", "attn.to_k")
+        key = key.replace("self_attn_v_proj", "attn.to_v")
+        key = key.replace("self_attn_out_proj", "attn.to_out")
+        return key
+    
+    def _replace_kohya_unet_key(self, key):
+        key = key.replace("lora_unet_", "model.diffusion_model.")
+        key = key.replace("ff_net", "ff.net")
+        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = re.sub(r'_(\d+)', r'.\1', key)
+        name, suffix = split_key(key)
+        if name not in sdxl_civitai_unet_keymap:
+            raise ValueError(f"Unsupported key: {key}, name: {name}, suffix: {suffix}")
+        key = sdxl_civitai_unet_keymap[name] + suffix
+        return key
+
+    def _from_kohya(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+        unet_dict = {}
+        te1_dict = {}
+        te2_dict = {}
+        for key, param in lora_state_dict.items():
+            lora_args = {}
+            if ".alpha" not in key:
+                continue            
+            lora_args["alpha"] = param
+            lora_args["up"] = lora_state_dict[key.replace(".alpha", ".lora_up.weight")]
+            lora_args["down"] = lora_state_dict[key.replace(".alpha", ".lora_down.weight")]
+            lora_args["rank"] = lora_args["up"].shape[1]
+            key = key.replace(".alpha", "")
+            if "lora_te1" in key:
+                key = self._replace_kohya_te1_key(key)
+                te1_dict[key] = lora_args            
+            elif "lora_te2" in key:
+                key = self._replace_kohya_te2_key(key)
+                te2_dict[key] = lora_args
+            elif "lora_unet" in key:
+                key = self._replace_kohya_unet_key(key)
+                unet_dict[key] = lora_args
+            else:
+                raise ValueError(f"Unsupported key: {key}")
+        return {"unet": unet_dict, "text_encoder": te1_dict, "text_encoder_2": te2_dict}    
+
+    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+        key = list(lora_state_dict.keys())[0]
+        if "lora_te1" in key or "lora_te2" in key or "lora_unet" in key:
+            return self._from_kohya(lora_state_dict)
+        raise ValueError(f"Unsupported key: {key}")
+            
+        
+
 # TODO: add controlnet/ipadapter/kolors
 class SDXLImagePipeline(BasePipeline):
-
+    lora_converter = SDXLLoRAConverter()
     def __init__(self,
                  tokenizer: CLIPTokenizer,
                  tokenizer_2: CLIPTokenizer,
@@ -73,12 +146,13 @@ class SDXLImagePipeline(BasePipeline):
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
-        text_encoder = SDXLTextEncoder.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
-        text_encoder_2 = SDXLTextEncoder2.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
-        unet = SDXLUNet.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
+        with LoRAContext():
+            text_encoder = SDXLTextEncoder.from_state_dict(
+                loaded_state_dict, device=init_device, dtype=dtype)
+            text_encoder_2 = SDXLTextEncoder2.from_state_dict(
+                loaded_state_dict, device=init_device, dtype=dtype)
+            unet = SDXLUNet.from_state_dict(
+                loaded_state_dict, device=init_device, dtype=dtype)
         vae_decoder = SDXLVAEDecoder.from_state_dict(
             loaded_state_dict, device=init_device, dtype=torch.float32)
         vae_encoder = SDXLVAEEncoder.from_state_dict(
@@ -169,7 +243,7 @@ class SDXLImagePipeline(BasePipeline):
         cfg_scale: float,
         batch_cfg: bool = True
     ):
-        if cfg_scale < 1.0:
+        if cfg_scale <= 1.0:
             return self.predict_noise(latents, timestep, positive_prompt_emb, add_time_id)
         if not batch_cfg:
             # cfg by predict noise one by one
@@ -196,6 +270,38 @@ class SDXLImagePipeline(BasePipeline):
             device=self.device,
         )
         return noise_pred
+    
+    def patch_lora(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
+        for (lora_path, lora_scale) in lora_list:
+            state_dict = load_file(lora_path, device="cpu")
+            lora_state_dict = self.lora_converter.convert(state_dict)
+            for model_name, state_dict in lora_state_dict.items():
+                model = getattr(self, model_name)
+                for key, param in state_dict.items():
+                    module = model.get_submodule(key)
+                    if not isinstance(module, (LoRALinear, LoRAConv2d)):
+                        raise ValueError(f"Unsupported lora key: {key}")
+                    lora_args = {
+                        "name": key,
+                        "scale": lora_scale,
+                        "rank": param['rank'],
+                        "alpha": param['alpha'],
+                        "up": param['up'],
+                        "down": param['down'],
+                        "device": self.device,
+                        "dtype": self.dtype,
+                        "save_original_weight": save_original_weight
+                    }
+                    if fused:
+                        module.add_frozen_lora(**lora_args)
+                    else:
+                        module.add_lora(**lora_args)
+
+    def unpatch_lora(self):
+        for key, module in self.unet.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        
 
     @torch.no_grad()
     def __call__(

@@ -18,3 +18,32 @@ class TestSDXLImage(ImageTestCase):
         )
 
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_txt2img.png", threshold=0.99)
+
+    def test_unfused_lora(self):
+        lora_model_path = self.download_model("modelscope://MusePublic/89_lora_SD_XL?revision=532")
+        self.pipe.patch_lora([(lora_model_path, 0.8)])
+        image = self.pipe(
+            prompt="a beautiful girl, chibi",
+            width=1024,
+            height=1024,
+            num_inference_steps=20,
+            seed=42,
+            clip_skip=2,
+        )
+        self.pipe.unpatch_lora()
+        self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
+
+    def test_fused_lora(self):
+        lora_model_path = self.download_model("modelscope://MusePublic/89_lora_SD_XL?revision=532")
+        self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
+        image = self.pipe(
+            prompt="a beautiful girl, chibi",
+            width=1024,
+            height=1024,
+            num_inference_steps=20,
+            seed=42,
+            clip_skip=2,
+        )
+        self.pipe.unpatch_lora()
+        self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
+        

@@ -18,19 +18,17 @@ class LoRA(nn.Module):
             dtype: torch.dtype,
     ):
         super().__init__()
-        self.scale = scale
-        self.rank = rank        # LoRA Rank, the rank of the low-rank adaptation matrix
-        self.alpha = alpha      # LoRA Alpha, the scaling factor for the low-rank adaptation matrix
-        self.up = up            # LoRA Up, the linear layer for the low-rank adaptation matrix
-        self.down = down        # LoRA Down, the linear layer for the low-rank adaptation matrix
         self.device = device
         self.dtype = dtype
-        self.up.to(device=device, dtype=dtype)
-        self.down.to(device=device, dtype=dtype)
+        self.scale = scale
+        self.rank = rank
+        self.alpha = alpha.item()
+        self.up = up.to(device=device, dtype=dtype)
+        self.down = down.to(device=device, dtype=dtype)
 
     def forward(self, x):
         if isinstance(self.up, torch.Tensor) and isinstance(self.down, torch.Tensor):
-            return self.scale * (self.alpha / self.rank) * (self.up @ self.down @ x)
+            return self.scale * (self.alpha / self.rank) * (x @ self.down.T @ self.up.T)
         return self.scale * (self.alpha / self.rank) * (self.up(self.down(x)))
 
     def apply_to(self, w: Union[nn.Linear, nn.Conv2d, nn.Parameter, torch.Tensor]):
@@ -83,8 +81,13 @@ class LoRALinear(nn.Linear):
                  down: torch.Tensor,
                  device: str,
                  dtype: torch.dtype,
-                 ):
-        lora = LoRA(scale, rank, alpha, up, down, device, dtype)
+                 **kwargs
+    ):
+        up_linear = torch.nn.utils.skip_init(nn.Linear, up.shape[1], up.shape[0], bias=False, device=device, dtype=dtype)
+        down_linear = torch.nn.utils.skip_init(nn.Linear, down.shape[0], down.shape[1], bias=False, device=device, dtype=dtype)
+        up_linear.weight.data = up
+        down_linear.weight.data = down
+        lora = LoRA(scale, rank, alpha, up_linear, down_linear, device, dtype)
         self._lora_dict[name] = lora
 
     def modify_scale(self, name: str, scale: float):
@@ -117,7 +120,7 @@ class LoRALinear(nn.Linear):
         self._lora_dict.clear()
         self._frozen_lora_list = []
         if self._original_weight is not None:
-            self.weight.copy_(self._original_weight)
+            self.weight.data = self._original_weight
             self._original_weight = None
 
     def forward(self, x):
@@ -205,14 +208,15 @@ class LoRAConv2d(nn.Conv2d):
                  down: torch.Tensor,
                  device: str,
                  dtype: torch.dtype,
-                 ):
+                 **kwargs
+        ):
 
         self._lora_dict[name] = self._construct_lora(name, scale, rank, alpha, up, down, device, dtype)
 
     def modify_scale(self, name: str, scale: float):
         if name not in self._lora_dict:
             raise ValueError(
-                f"LoRA name {name} not found in LoRALinear {self.__class__.__name__}")
+                f"LoRA name {name} not found in LoRAConv2d {self.__class__.__name__}")
         self._lora_dict[name].scale = scale
 
     def add_frozen_lora(self,
@@ -250,7 +254,7 @@ class LoRAConv2d(nn.Conv2d):
 
 
 @contextmanager
-def lora_context():
+def LoRAContext():
     origin_linear = torch.nn.Linear
     origin_conv2d = torch.nn.Conv2d
 

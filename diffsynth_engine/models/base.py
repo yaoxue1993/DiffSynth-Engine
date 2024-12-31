@@ -1,14 +1,24 @@
 import os
 import torch
 import torch.nn as nn
+from dataclasses import dataclass
 from typing import Dict, Union
 
 from diffsynth_engine.models.utils import no_init_weights
 from safetensors.torch import load_file
 
 
+
+
+LoRAStateDictType = Dict[str, Dict[str, torch.Tensor]]
+class LoRAStateDictConverter:
+    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+        return {"lora": lora_state_dict}
+
+
+StateDictType = Dict[str, torch.Tensor]
 class StateDictConverter:
-    def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def convert(self, state_dict: StateDictType) -> StateDictType:
         return state_dict
 
 
