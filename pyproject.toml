@@ -22,6 +22,9 @@ dependencies = [
     "tokenizers",
     "pydantic",
     "modelscope",
+    "flufl.lock",
+    "scipy",
+    "torchsde"
 ]
 
 [project.optional-dependencies]
