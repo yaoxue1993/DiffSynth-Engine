@@ -1,4 +1,5 @@
 from .sdxl_civitai import sdxl_civitai_unet_keymap, sdxl_civitai_te1_keymap, sdxl_civitai_te2_keymap
+from .sd_civitai import sd_civitai_unet_keymap
 suffix_list = [
     ".lora_up.weight",
     ".lora_down.weight",

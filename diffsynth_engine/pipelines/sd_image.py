@@ -1,13 +1,16 @@
+import re
 import os
 import torch
 import logging
-from typing import Callable, Dict, Union, Optional, List
+from typing import Callable, Dict, Optional, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.models.basic.timestep import TemporalTimesteps
+from diffsynth_engine.conf.keymap import split_key, sd_civitai_unet_keymap
+from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
+from diffsynth_engine.models.base import LoRAStateDictConverter, LoRAStateDictType
 from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
@@ -19,9 +22,115 @@ from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
+re_compiled = {}
+re_digits = re.compile(r"\d+")
+suffix_conversion = {
+    "attentions": {},
+    "resnets": {
+        "conv1": "in_layers_2",
+        "conv2": "out_layers_3",
+        "norm1": "in_layers_0",
+        "norm2": "out_layers_0",
+        "time_emb_proj": "emb_layers_1",
+        "conv_shortcut": "skip_connection",
+    }
+}
+def convert_diffusers_name_to_compvis(key):
+    def match(match_list, regex_text):
+        regex = re_compiled.get(regex_text)
+        if regex is None:
+            regex = re.compile(regex_text)
+            re_compiled[regex_text] = regex
+
+        r = re.match(regex, key)
+        if not r:
+            return False
+
+        match_list.clear()
+        match_list.extend([int(x) if re.match(re_digits, x) else x for x in r.groups()])
+        return True
+
+    m = []
+
+    if match(m, r"lora_unet_conv_in(.*)"):
+        return f'model.diffusion_model.input_blocks.0.0{m[0]}'
+
+    if match(m, r"lora_unet_conv_out(.*)"):
+        return f'model.diffusion_model.out.2{m[0]}'
+
+    if match(m, r"lora_unet_time_embedding_linear_(\d+)(.*)"):
+        return f"model.diffusion_model.time_embed_{m[0] * 2 - 2}{m[1]}"
+
+    if match(m, r"lora_unet_down_blocks_(\d+)_(attentions|resnets)_(\d+)_(.+)"):
+        suffix = suffix_conversion.get(m[1], {}).get(m[3], m[3])
+        return f"model.diffusion_model.input_blocks.{1 + m[0] * 3 + m[2]}.{1 if m[1] == 'attentions' else 0}.{suffix}"
+
+    if match(m, r"lora_unet_mid_block_(attentions|resnets)_(\d+)_(.+)"):
+        suffix = suffix_conversion.get(m[0], {}).get(m[2], m[2])
+        return f"model.diffusion_model.middle_block.{1 if m[0] == 'attentions' else m[1] * 2}.{suffix}"
+
+    if match(m, r"lora_unet_up_blocks_(\d+)_(attentions|resnets)_(\d+)_(.+)"):
+        suffix = suffix_conversion.get(m[1], {}).get(m[3], m[3])
+        return f"model.diffusion_model.output_blocks.{m[0] * 3 + m[2]}.{1 if m[1] == 'attentions' else 0}.{suffix}"
+
+    if match(m, r"lora_unet_down_blocks_(\d+)_downsamplers_0_conv"):
+        return f"model.diffusion_model.input_blocks.{3 + m[0] * 3}.0.op"
+
+    if match(m, r"lora_unet_up_blocks_(\d+)_upsamplers_0_conv"):
+        return f"model.diffusion_model.output_blocks.{2 + m[0] * 3}.{2 if m[0]>0 else 1}.conv"    
+    return key
+
+class SDLoRAConverter(LoRAStateDictConverter):
+    def _replace_kohya_te_key(self, key):
+        key = key.replace("lora_te_text_model_encoder_layers_", "encoders.")
+        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = key.replace("mlp_fc1", "fc1")
+        key = key.replace("mlp_fc2", "fc2")
+        key = key.replace("self_attn_q_proj", "attn.to_q")
+        key = key.replace("self_attn_k_proj", "attn.to_k")
+        key = key.replace("self_attn_v_proj", "attn.to_v")
+        key = key.replace("self_attn_out_proj", "attn.to_out")
+        return key
+
+    def _replace_kohya_unet_key(self, key):
+        key = convert_diffusers_name_to_compvis(key)
+        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = re.sub(r'_(\d+)', r'.\1', key)        
+        key = key.replace("ff_net", "ff.net")
+        name, suffix = split_key(key)
+        if name not in sd_civitai_unet_keymap:
+            raise ValueError(f"Unsupported key: {key}, name: {name}, suffix: {suffix}")
+        key = sd_civitai_unet_keymap[name] + suffix
+        return key
+
+    def _from_kohya(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+        unet_dict = {}
+        te_dict = {}
+        for key, param in lora_state_dict.items():
+            lora_args = {}
+            if ".alpha" not in key:
+                continue            
+            lora_args["alpha"] = param
+            lora_args["up"] = lora_state_dict[key.replace(".alpha", ".lora_up.weight")].squeeze()
+            lora_args["down"] = lora_state_dict[key.replace(".alpha", ".lora_down.weight")].squeeze()
+            lora_args["rank"] = lora_args["up"].shape[1]
+            key = key.replace(".alpha", "")
+            if "lora_unet" in key:
+                key = self._replace_kohya_unet_key(key)
+                unet_dict[key] = lora_args
+            elif "lora_te" in key:
+                key = self._replace_kohya_te_key(key)
+                te_dict[key] = lora_args
+        return {"unet": unet_dict, "text_encoder": te_dict}
+    
+    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+        key = list(lora_state_dict.keys())[0]
+        if "lora_te" in key or  "lora_unet" in key:
+            return self._from_kohya(lora_state_dict)
+        raise ValueError(f"Unsupported key: {key}")
 
 class SDImagePipeline(BasePipeline):
-
+    lora_converter = SDLoRAConverter()
     def __init__(self,
                  tokenizer: CLIPTokenizer,
                  text_encoder: SDTextEncoder,
@@ -65,10 +174,11 @@ class SDImagePipeline(BasePipeline):
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
-        text_encoder = SDTextEncoder.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
-        unet = SDUNet.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=dtype)
+        with LoRAContext():
+            text_encoder = SDTextEncoder.from_state_dict(
+                loaded_state_dict, device=init_device, dtype=dtype)
+            unet = SDUNet.from_state_dict(
+                loaded_state_dict, device=init_device, dtype=dtype)
         vae_decoder = SDVAEDecoder.from_state_dict(
             loaded_state_dict, device=init_device, dtype=torch.float32)
         vae_encoder = SDVAEEncoder.from_state_dict(
@@ -145,6 +255,40 @@ class SDImagePipeline(BasePipeline):
         )
         return noise_pred
 
+    def patch_lora(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
+        for (lora_path, lora_scale) in lora_list:
+            state_dict = load_file(lora_path, device="cpu")
+            lora_state_dict = self.lora_converter.convert(state_dict)
+            for model_name, state_dict in lora_state_dict.items():
+                model = getattr(self, model_name)
+                for key, param in state_dict.items():
+                    module = model.get_submodule(key)
+                    if not isinstance(module, (LoRALinear, LoRAConv2d)):
+                        raise ValueError(f"Unsupported lora key: {key}")
+                    lora_args = {
+                        "name": key,
+                        "scale": lora_scale,
+                        "rank": param['rank'],
+                        "alpha": param['alpha'],
+                        "up": param['up'],
+                        "down": param['down'],
+                        "device": self.device,
+                        "dtype": self.dtype,
+                        "save_original_weight": save_original_weight
+                    }
+                    if fused:
+                        module.add_frozen_lora(**lora_args)
+                    else:
+                        module.add_lora(**lora_args)
+
+    def unpatch_lora(self):
+        for key, module in self.unet.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        for key, module in self.text_encoder.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+
     @torch.no_grad()
     def __call__(
             self,
@@ -219,7 +363,7 @@ class SDImagePipeline(BasePipeline):
         self.load_models_to_device(['vae_decoder'])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-
+ 
         # offload all models
         self.load_models_to_device([])
         return image

@@ -301,7 +301,12 @@ class SDXLImagePipeline(BasePipeline):
         for key, module in self.unet.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
-        
+        for key, module in self.text_encoder.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        for key, module in self.text_encoder_2.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
 
     @torch.no_grad()
     def __call__(

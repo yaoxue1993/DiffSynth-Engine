@@ -16,3 +16,29 @@ class TestSDImage(ImageTestCase):
             seed=42
         )
         self.assertImageEqualAndSaveFailed(image, "sd/sd_txt2img.png", threshold=0.999)
+
+    def test_unfused_lora(self):
+        lora_model_path = self.download_model("modelscope://MusePublic/148_lora_SD_1_5?revision=765" )       
+        self.pipe.patch_lora([(lora_model_path, 0.8)])
+        image = self.pipe(
+            prompt="a girl, drawing",
+            width=512,
+            height=512,
+            num_inference_steps=20,
+            seed=42,
+        )
+        self.pipe.unpatch_lora()
+        self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)
+
+    def test_fused_lora(self):
+        lora_model_path = self.download_model("modelscope://MusePublic/148_lora_SD_1_5?revision=765")
+        self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
+        image = self.pipe(
+            prompt="a girl, drawing",
+            width=512,
+            height=512,
+            num_inference_steps=20,
+            seed=42,
+        )
+        self.pipe.unpatch_lora()
+        self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)

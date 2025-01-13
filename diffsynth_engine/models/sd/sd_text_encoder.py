@@ -306,8 +306,7 @@ class SDTextEncoder(PreTrainedModel):
             embeds = encoder(embeds, attn_mask=attn_mask)
             if encoder_id + clip_skip == len(self.encoders):
                 break
-        if clip_skip == 1:
-            embeds = self.final_layer_norm(embeds)
+        embeds = self.final_layer_norm(embeds)
         return embeds
 
     @classmethod
