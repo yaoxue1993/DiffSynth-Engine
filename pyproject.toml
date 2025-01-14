@@ -22,9 +22,11 @@ dependencies = [
     "tokenizers",
     "pydantic",
     "modelscope",
-    "flufl",
+    "flufl.lock",
     "scipy",
-    "torchsde"
+    "torchsde",
+    "pillow",
+    "regex"
 ]
 
 [project.optional-dependencies]
@@ -32,6 +34,8 @@ dev = [
     "diffusers == 0.31.0",
     "transformers == 4.45.2",
     "ruff",
+    "scikit-image",
+    "pytest"
 ]
 all = [
     "diffsynth-engine[dev]",
