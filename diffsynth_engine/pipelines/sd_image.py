@@ -10,7 +10,7 @@ from PIL import Image
 
 from diffsynth_engine.conf.keymap import split_key, sd_civitai_unet_keymap
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
-from diffsynth_engine.models.base import LoRAStateDictConverter, LoRAStateDictType
+from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
@@ -103,7 +103,7 @@ class SDLoRAConverter(LoRAStateDictConverter):
         key = sd_civitai_unet_keymap[name] + suffix
         return key
 
-    def _from_kohya(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         unet_dict = {}
         te_dict = {}
         for key, param in lora_state_dict.items():
@@ -123,7 +123,7 @@ class SDLoRAConverter(LoRAStateDictConverter):
                 te_dict[key] = lora_args
         return {"unet": unet_dict, "text_encoder": te_dict}
     
-    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         key = list(lora_state_dict.keys())[0]
         if "lora_te" in key or  "lora_unet" in key:
             return self._from_kohya(lora_state_dict)

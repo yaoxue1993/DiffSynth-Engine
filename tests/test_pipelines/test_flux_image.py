@@ -24,3 +24,18 @@ class TestFLUXImage(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.99)
+
+
+    def test_fused_lora(self):
+        lora_model_path = self.download_model("modelscope://MAILAND/Merjic-Maria?revision=v1.0&endpoint=www.modelscope.cn")
+        self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
+        image = self.pipe(
+            prompt="1 girl, maria",
+            width=1024,
+            height=1024,
+            embedded_guidance=3.5,
+            num_inference_steps=50,
+            seed=42,
+        )
+        self.pipe.unpatch_lora()
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)

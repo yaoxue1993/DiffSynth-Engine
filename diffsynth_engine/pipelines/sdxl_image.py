@@ -7,7 +7,7 @@ from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.models.base import LoRAStateDictConverter, LoRAStateDictType
+from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
 from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2, SDXLVAEDecoder, SDXLVAEEncoder, SDXLUNet
 from diffsynth_engine.pipelines import BasePipeline
@@ -58,7 +58,7 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
         key = sdxl_civitai_unet_keymap[name] + suffix
         return key
 
-    def _from_kohya(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         unet_dict = {}
         te1_dict = {}
         te2_dict = {}
@@ -84,7 +84,7 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
                 raise ValueError(f"Unsupported key: {key}")
         return {"unet": unet_dict, "text_encoder": te1_dict, "text_encoder_2": te2_dict}    
 
-    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         key = list(lora_state_dict.keys())[0]
         if "lora_te1" in key or "lora_te2" in key or "lora_unet" in key:
             return self._from_kohya(lora_state_dict)

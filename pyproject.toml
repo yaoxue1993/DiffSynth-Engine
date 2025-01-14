@@ -22,7 +22,7 @@ dependencies = [
     "tokenizers",
     "pydantic",
     "modelscope",
-    "flufl.lock",
+    "flufl",
     "scipy",
     "torchsde"
 ]

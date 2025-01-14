@@ -1,3 +1,4 @@
+import re
 import os
 import torch
 import math
@@ -9,6 +10,7 @@ from PIL import Image
 
 from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
 from diffsynth_engine.models.basic.tiler import FastTileWorker
+from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
@@ -17,6 +19,82 @@ from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TO
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
+
+class FluxLoRAConverter(LoRAStateDictConverter):
+    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:    
+        dit_dict = {}
+        te_dict = {}
+        for key, param in lora_state_dict.items():
+            if "lora_unet" in key:
+                key = key.replace("lora_unet_", "")                
+                key = re.sub(r'(\d+)_', r'\1.', key)
+                key = re.sub(r'_(\d+)', r'.\1', key)
+                key = key.replace("modulation_lin", "modulation.lin")
+                key = key.replace("mod_lin", "mod.lin")
+                key = key.replace("attn_qkv", "attn.qkv")
+                key = key.replace("attn_proj", "attn.proj")
+                dit_dict[key] = param
+            elif "lora_te" in key:
+                key = key.replace("lora_te1", "text_encoder")
+                key = key.replace("text_model_encoder_layers", "text_model.encoder.layers")
+                te_dict[key] = param
+            else:
+                raise ValueError(f"Unsupported key: {key}")
+        return {"dit": dit_dict, "text_encoder": te_dict}
+
+
+    def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        key = key.replace("transformer.", "")
+        if "single_transformer_blocks" in key: # transformer.single_transformer_blocks.0.attn.to_k.weight
+            key = key.replace("single_transformer_blocks", "single_blocks") # single_transformer_blocks.0.attn.to_k.weight
+            key = key.replace("norm.linear", "modulation.lin")
+            key = key.replace("proj_out", "linear2")
+            key = key.replace("attn", "linear1")   # linear1 = [to_q, to_k, to_v, mlp]
+            key = key.replace("proj_mlp", "linear1.mlp")
+            return key
+        elif "transformer_blocks" in key:
+            key = key.replace("transformer_blocks", "double_blocks")
+            key = key.replace("attn.add_k_proj", "txt_attn.qkv.to_k")
+            key = key.replace("attn.add_q_proj", "txt_attn.qkv.to_q")
+            key = key.replace("attn.add_v_proj", "txt_attn.qkv.to_v")
+            key = key.replace("attn.to_add_out", "txt_attn.qkv.to_out")
+            key = key.replace("attn.to_k", "img_attn.qkv.to_k")
+            key = key.replace("attn.to_q", "img_attn.qkv.to_q")
+            key = key.replace("attn.to_v", "img_attn.qkv.to_v")
+            key = key.replace("attn.to_out", "img_attn.qkv.to_out")
+            key = key.replace("ff.net", "img_mlp")
+            key = key.replace("ff_context.net", "txt_mlp")
+            key = key.replace("norm1.linear", "img_mod.lin")
+            key = key.replace("norm1_context.linear", "txt_mod.lin")
+            key = key.replace(".0.proj", ".0")
+            return key
+        elif "context_embedder" in key:
+            return key.replace("context_embedder", "txt_in")
+        elif "x_embedder" in key and "_x_embedder" not in key:
+            return key.replace("x_embedder", "img_in")
+        elif "time_text_embed" in key:
+            # time_in + guidance_in + vector_in
+            key = key.replace("time_text_embed.", "")
+            key = key.replace("timestep_embedder", "time_in")
+            key = key.replace("guidance_embedder", "guidance_in")
+            key = key.replace("text_embedder", "vector_in")
+            key = key.replace("linear_1", "in_layer")
+            key = key.replace("linear_2", "out_layer")
+            return key
+        elif "norm_out.linear" in key:
+            return key.replace("norm_out.linear", "final_layer.adaLN_modulation.1")
+        elif "proj_out" in key:
+            return key.replace("proj_out", "final_layer.linear")
+        else:
+            raise ValueError(f"Unsupported key: {key}")
+
+    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        key = list(lora_state_dict.keys())[0]
+        if "lora_te" in key or "lora_unet" in key:
+            return self._from_kohya(lora_state_dict)
+        elif key.startswith("transformer"):
+            return self._from_diffusers(lora_state_dict)
+        raise ValueError(f"Unsupported key: {key}")
 
 
 def calculate_shift(

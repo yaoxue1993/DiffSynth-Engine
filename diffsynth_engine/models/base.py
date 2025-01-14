@@ -8,11 +8,8 @@ from diffsynth_engine.models.utils import no_init_weights
 from safetensors.torch import load_file
 
 
-
-
-LoRAStateDictType = Dict[str, Dict[str, torch.Tensor]]
 class LoRAStateDictConverter:
-    def convert(self, lora_state_dict: LoRAStateDictType) -> Dict[str, LoRAStateDictType]:
+    def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         return {"lora": lora_state_dict}
 
 
