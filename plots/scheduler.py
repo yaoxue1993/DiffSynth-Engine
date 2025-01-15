@@ -14,7 +14,6 @@ for i, scheduler in enumerate(schedule_function_list, start=1):
     rounded_sampled_timesteps = torch.floor(sampled_timesteps).to(torch.int64)
     
     distribution_counter[rounded_sampled_timesteps] += 1
-    breakpoint()
     # 创建子图
     plt.subplot(len(schedule_function_list), 1, i)
     plt.bar(x_values := np.arange(1000)[::-1], distribution_counter.numpy()[::-1], width=10.0)

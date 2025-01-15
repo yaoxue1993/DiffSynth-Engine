@@ -2,7 +2,7 @@ import re
 import os
 import torch
 import math
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
@@ -10,6 +10,7 @@ from PIL import Image
 
 from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
 from diffsynth_engine.models.basic.tiler import FastTileWorker
+from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
 from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
@@ -17,14 +18,21 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
+from diffsynth_engine.conf.keymap import (
+    flux_civitai_dit_rename_dict, flux_civitai_dit_suffix_rename_dict,
+    flux_civitai_clip_rename_dict, flux_civitai_clip_attn_rename_dict
+)
 
 logger = logging.get_logger(__name__)
 
 class FluxLoRAConverter(LoRAStateDictConverter):
-    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:    
+    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:            
         dit_dict = {}
         te_dict = {}
         for key, param in lora_state_dict.items():
+            origin_key = key
+            if ".alpha" not in key:
+                continue
             if "lora_unet" in key:
                 key = key.replace("lora_unet_", "")                
                 key = re.sub(r'(\d+)_', r'\1.', key)
@@ -33,60 +41,107 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 key = key.replace("mod_lin", "mod.lin")
                 key = key.replace("attn_qkv", "attn.qkv")
                 key = key.replace("attn_proj", "attn.proj")
-                dit_dict[key] = param
+                key = key.replace(".alpha", ".weight")
+                names = key.split(".")
+                if key in flux_civitai_dit_rename_dict:
+                    rename = flux_civitai_dit_rename_dict[key]
+                    if key.startswith("final_layer.adaLN_modulation.1."):
+                        param = torch.concat([param[3072:], param[:3072]], dim=0)
+                elif names[0] == "double_blocks":
+                    rename = f"blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
+                elif names[0] == "single_blocks":
+                    if ".".join(names[2:]) in flux_civitai_dit_suffix_rename_dict:
+                        rename = f"single_blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
+                    else:
+                        raise ValueError(f"Unsupported key: {key}")
+                lora_args = {}
+                lora_args["alpha"] = param
+                lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+                lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                lora_args["rank"] = lora_args['up'].shape[1]                
+                rename = rename.replace(".weight", "")
+                dit_dict[rename] = lora_args
             elif "lora_te" in key:
-                key = key.replace("lora_te1", "text_encoder")
-                key = key.replace("text_model_encoder_layers", "text_model.encoder.layers")
-                te_dict[key] = param
+                name = key.replace("lora_te1", "text_encoder")
+                name = name.replace("text_model_encoder_layers", "text_model.encoder.layers")
+                name = name.replace(".alpha", ".weight")
+                rename = ""
+                if name in flux_civitai_clip_rename_dict:
+                    if name == "text_model.embeddings.position_embedding.weight":
+                        param = param.reshape((1, param.shape[0], param.shape[1]))
+                    rename = flux_civitai_clip_rename_dict[name]
+                elif name.startswith("text_model.encoder.layers."):
+                    names = name.split(".")
+                    layer_id, layer_type, tail = names[3], ".".join(names[4:-1]), names[-1]
+                    rename = ".".join(["encoders", layer_id, flux_civitai_clip_attn_rename_dict[layer_type], tail])
+                else:
+                    raise ValueError(f"Unsupported key: {key}")
+                lora_args = {}
+                lora_args['alpha'] = param
+                lora_args['up'] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+                lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+                lora_args["rank"] = lora_args['up'].shape[1]
+                rename = rename.replace(".weight", "")                
+                te_dict[rename] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
-        return {"dit": dit_dict, "text_encoder": te_dict}
+        return {"dit": dit_dict, "text_encoder_1": te_dict}
 
 
     def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
-        key = key.replace("transformer.", "")
-        if "single_transformer_blocks" in key: # transformer.single_transformer_blocks.0.attn.to_k.weight
-            key = key.replace("single_transformer_blocks", "single_blocks") # single_transformer_blocks.0.attn.to_k.weight
-            key = key.replace("norm.linear", "modulation.lin")
-            key = key.replace("proj_out", "linear2")
-            key = key.replace("attn", "linear1")   # linear1 = [to_q, to_k, to_v, mlp]
-            key = key.replace("proj_mlp", "linear1.mlp")
-            return key
-        elif "transformer_blocks" in key:
-            key = key.replace("transformer_blocks", "double_blocks")
-            key = key.replace("attn.add_k_proj", "txt_attn.qkv.to_k")
-            key = key.replace("attn.add_q_proj", "txt_attn.qkv.to_q")
-            key = key.replace("attn.add_v_proj", "txt_attn.qkv.to_v")
-            key = key.replace("attn.to_add_out", "txt_attn.qkv.to_out")
-            key = key.replace("attn.to_k", "img_attn.qkv.to_k")
-            key = key.replace("attn.to_q", "img_attn.qkv.to_q")
-            key = key.replace("attn.to_v", "img_attn.qkv.to_v")
-            key = key.replace("attn.to_out", "img_attn.qkv.to_out")
-            key = key.replace("ff.net", "img_mlp")
-            key = key.replace("ff_context.net", "txt_mlp")
-            key = key.replace("norm1.linear", "img_mod.lin")
-            key = key.replace("norm1_context.linear", "txt_mod.lin")
-            key = key.replace(".0.proj", ".0")
-            return key
-        elif "context_embedder" in key:
-            return key.replace("context_embedder", "txt_in")
-        elif "x_embedder" in key and "_x_embedder" not in key:
-            return key.replace("x_embedder", "img_in")
-        elif "time_text_embed" in key:
-            # time_in + guidance_in + vector_in
-            key = key.replace("time_text_embed.", "")
-            key = key.replace("timestep_embedder", "time_in")
-            key = key.replace("guidance_embedder", "guidance_in")
-            key = key.replace("text_embedder", "vector_in")
-            key = key.replace("linear_1", "in_layer")
-            key = key.replace("linear_2", "out_layer")
-            return key
-        elif "norm_out.linear" in key:
-            return key.replace("norm_out.linear", "final_layer.adaLN_modulation.1")
-        elif "proj_out" in key:
-            return key.replace("proj_out", "final_layer.linear")
-        else:
-            raise ValueError(f"Unsupported key: {key}")
+        dit_dict = {}
+        for key, param in lora_state_dict.items():
+            origin_key = key
+            if ".alpha" not in key:
+                continue
+            key = key.replace(".alpha", ".weight")
+            key = key.replace("transformer.", "")
+            if "single_transformer_blocks" in key: # transformer.single_transformer_blocks.0.attn.to_k.weight
+                key = key.replace("single_transformer_blocks", "single_blocks") # single_transformer_blocks.0.attn.to_k.weight
+                key = key.replace("norm.linear", "modulation.lin")
+                key = key.replace("proj_out", "linear2")
+                key = key.replace("attn", "linear1")   # linear1 = [to_q, to_k, to_v, mlp]
+                key = key.replace("proj_mlp", "linear1.mlp")
+            elif "transformer_blocks" in key:
+                key = key.replace("transformer_blocks", "double_blocks")
+                key = key.replace("attn.add_k_proj", "txt_attn.qkv.to_k")
+                key = key.replace("attn.add_q_proj", "txt_attn.qkv.to_q")
+                key = key.replace("attn.add_v_proj", "txt_attn.qkv.to_v")
+                key = key.replace("attn.to_add_out", "txt_attn.qkv.to_out")
+                key = key.replace("attn.to_k", "img_attn.qkv.to_k")
+                key = key.replace("attn.to_q", "img_attn.qkv.to_q")
+                key = key.replace("attn.to_v", "img_attn.qkv.to_v")
+                key = key.replace("attn.to_out", "img_attn.qkv.to_out")
+                key = key.replace("ff.net", "img_mlp")
+                key = key.replace("ff_context.net", "txt_mlp")
+                key = key.replace("norm1.linear", "img_mod.lin")
+                key = key.replace("norm1_context.linear", "txt_mod.lin")
+                key = key.replace(".0.proj", ".0")
+            elif "context_embedder" in key:
+                key = key.replace("context_embedder", "txt_in")
+            elif "x_embedder" in key and "_x_embedder" not in key:
+                key = key.replace("x_embedder", "img_in")
+            elif "time_text_embed" in key:
+                key = key.replace("time_text_embed.", "")
+                key = key.replace("timestep_embedder", "time_in")
+                key = key.replace("guidance_embedder", "guidance_in")
+                key = key.replace("text_embedder", "vector_in")
+                key = key.replace("linear_1", "in_layer")
+                key = key.replace("linear_2", "out_layer")
+            elif "norm_out.linear" in key:
+                key = key.replace("norm_out.linear", "final_layer.adaLN_modulation.1")
+            elif "proj_out" in key:
+                key = key.replace("proj_out", "final_layer.linear")
+            else:
+                raise ValueError(f"Unsupported key: {key}")
+            lora_args = {}
+            lora_args['alpha'] = param
+            lora_args['up'] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+            lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
+            lora_args["rank"] = lora_args['up'].shape[1]
+            key = key.replace(".weight", "")
+            dit_dict[key] = lora_args
+        return {"dit": dit_dict}
 
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         key = list(lora_state_dict.keys())[0]
@@ -111,7 +166,7 @@ def calculate_shift(
 
 
 class FluxImagePipeline(BasePipeline):
-
+    lora_converter = FluxLoRAConverter()
     def __init__(self,
                  tokenizer: CLIPTokenizer,
                  tokenizer_2: T5TokenizerFast,
@@ -156,9 +211,10 @@ class FluxImagePipeline(BasePipeline):
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
-        text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-        dit = FluxDiT.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+        with LoRAContext():
+            dit = FluxDiT.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+            text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)        
+        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)        
         vae_decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
         vae_encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
 
@@ -176,6 +232,40 @@ class FluxImagePipeline(BasePipeline):
         if cpu_offload:
             pipe.enable_cpu_offload()
         return pipe
+
+    def patch_lora(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
+        for (lora_path, lora_scale) in lora_list:
+            state_dict = load_file(lora_path, device="cpu")
+            lora_state_dict = self.lora_converter.convert(state_dict)
+            for model_name, state_dict in lora_state_dict.items():
+                model = getattr(self, model_name)
+                for key, param in state_dict.items():
+                    module = model.get_submodule(key)
+                    if not isinstance(module, (LoRALinear, LoRAConv2d)):
+                        raise ValueError(f"Unsupported lora key: {key}")
+                    lora_args = {
+                        "name": key,
+                        "scale": lora_scale,
+                        "rank": param['rank'],
+                        "alpha": param['alpha'],
+                        "up": param['up'],
+                        "down": param['down'],
+                        "device": self.device,
+                        "dtype": self.dtype,
+                        "save_original_weight": save_original_weight
+                    }
+                    if fused:
+                        module.add_frozen_lora(**lora_args)
+                    else:
+                        module.add_lora(**lora_args)        
+    
+    def unpatch_lora(self):
+        for key, module in self.dit.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        for key, module in self.text_encoder_1.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor],

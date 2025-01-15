@@ -15,6 +15,7 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "torch >= 2.4.1",
+    "xformers",
     "safetensors",
     "einops",
     "ftfy",
