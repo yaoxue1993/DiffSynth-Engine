@@ -2,12 +2,9 @@ from .epsilon import EpsilonSampler
 import torch
 
 class EulerAncestralSampler(EpsilonSampler):
-    def __init__(self):
+    def initialize(self, init_latents, timesteps, sigmas, mask):  
+        super().initialize(init_latents, timesteps, sigmas, mask)
         self.eta = 1.0
-    
-    def initialize(self, latents, timesteps, sigmas):
-        self.sigmas = sigmas
-        self.timesteps = timesteps
     
     def _get_ancestral_step(self, sigma_from, sigma_to, eta=1.):
         sigma_up = min(sigma_to, eta * (sigma_to ** 2 * (sigma_from ** 2 - sigma_to ** 2) / sigma_from ** 2) ** 0.5)

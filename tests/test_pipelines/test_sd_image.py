@@ -16,6 +16,19 @@ class TestSDImage(ImageTestCase):
             seed=42
         )
         self.assertImageEqualAndSaveFailed(image, "sd/sd_txt2img.png", threshold=0.999)
+    
+    def test_inpainting(self):
+        image = self.pipe(
+            prompt="a beautiful girl with green hair",
+            input_image=self.get_input_image("test_image.png"),
+            mask_image=self.get_input_image("mask_image.png"),
+            denoising_strength=0.8,
+            width=1024,
+            height=1024,
+            num_inference_steps=20,
+            seed=42,
+        )
+        self.assertImageEqualAndSaveFailed(image, "sd/sd_inpainting.png", threshold=0.99)
 
     def test_unfused_lora(self):
         lora_model_path = self.download_model("modelscope://MusePublic/148_lora_SD_1_5?revision=765" )       

@@ -14,10 +14,24 @@ class TestSDXLImage(ImageTestCase):
             height=1024,
             num_inference_steps=20,
             seed=42,
-            clip_skip=2,
+            clip_skip=2
         )
 
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_txt2img.png", threshold=0.99)
+
+    def test_inpainting(self):
+        image = self.pipe(
+            prompt="a beautiful girl with green hair",
+            input_image=self.get_input_image("test_image.png"),
+            mask_image=self.get_input_image("mask_image.png"),
+            denoising_strength=0.8,
+            width=1024,
+            height=1024,
+            num_inference_steps=20,
+            seed=42,
+            clip_skip=2,
+        )
+        self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_inpainting.png", threshold=0.99)
 
     def test_unfused_lora(self):
         lora_model_path = self.download_model("modelscope://MusePublic/89_lora_SD_XL?revision=532")

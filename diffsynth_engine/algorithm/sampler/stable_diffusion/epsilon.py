@@ -1,7 +1,10 @@
 class EpsilonSampler:
-    def initialize(self, latents, timesteps, sigmas):                
-        raise NotImplementedError()
-    
+    def initialize(self, init_latents, timesteps, sigmas, mask):        
+        self.init_latents = init_latents
+        self.timesteps = timesteps        
+        self.sigmas = sigmas        
+        self.mask = mask
+
     def step(self, latents, model_output, current_step):
         raise NotImplementedError()
 
@@ -15,7 +18,10 @@ class EpsilonSampler:
 
     def _to_denoised(self, sigma, model_outputs, x):
         # eps prediction
-        return x - sigma * model_outputs
+        denoised = x - sigma * model_outputs
+        if self.mask is not None:
+            denoised = denoised * self.mask + self.init_latents * (1 - self.mask)
+        return denoised
     
     def add_noise(self, latents, noise, sigma):
         alpha_t = 1 / ((sigma ** 2 + 1) ** 0.5)

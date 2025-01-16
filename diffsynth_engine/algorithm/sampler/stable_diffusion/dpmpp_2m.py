@@ -4,10 +4,9 @@ class DPMSolverPlusPlus2MSampler(EpsilonSampler):
     """
     DPM Solver++ 2M sampler
     """
-    def initialize(self, latents, timesteps, sigmas):
+    def initialize(self, init_latents, timesteps, sigmas, mask):
+        super().initialize(init_latents, timesteps, sigmas, mask)
         self.old_denoised = None        
-        self.timesteps = timesteps
-        self.sigmas = sigmas
 
     def step(self, latents, model_outputs, i):
         s_prev, s, s_next = self.sigmas[i - 1], self.sigmas[i], self.sigmas[i + 1]

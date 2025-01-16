@@ -1,9 +1,5 @@
 from .epsilon import EpsilonSampler
 class EulerSampler(EpsilonSampler):
-    def initialize(self, latents, timesteps, sigmas):        
-        self.sigmas = sigmas
-        self.timesteps = timesteps    
-
     def step(self, latents, model_outputs, i):
         sigma = self.sigmas[i]
         latents = self._scaling(latents, sigma)

@@ -24,7 +24,19 @@ class TestFLUXImage(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.99)
-
+    
+    def test_inpainting(self):
+        image = self.pipe(
+            prompt="a beautiful girl with green hair",
+            input_image=self.get_input_image("test_image.png"),
+            mask_image=self.get_input_image("mask_image.png"),
+            denoising_strength=0.8,
+            width=1024,
+            height=1024,
+            num_inference_steps=20,
+            seed=42,
+        )
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_inpainting.png", threshold=0.99)\
 
     def test_fused_lora(self):
         lora_model_path = self.download_model("modelscope://MAILAND/Merjic-Maria?revision=v1.0&endpoint=www.modelscope.cn")

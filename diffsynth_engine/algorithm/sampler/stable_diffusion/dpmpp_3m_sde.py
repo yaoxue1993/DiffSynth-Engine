@@ -2,26 +2,20 @@ from .epsilon import EpsilonSampler
 from .brownian_tree import BrownianTreeNoiseSampler
 import torch
 class DPMSolverPlusPlus3MSDESampler(EpsilonSampler):
-    def __init__(self):
-        self.eta = 1.0
-        self.s_noise = 1.0
-
-    def initialize(self, latents, timesteps, sigmas):
+    def initialize(self, init_latents, timesteps, sigmas, mask):
+        super().initialize(init_latents, timesteps, sigmas, mask)
         sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-        self.noise_sampler = BrownianTreeNoiseSampler(latents, sigma_min, sigma_max)
-        self.timesteps = timesteps
-        self.sigmas = sigmas
+        self.noise_sampler = BrownianTreeNoiseSampler(init_latents, sigma_min, sigma_max)
         self.denoised_1 = None    
         self.denoised_2 = None
         self.h_1 = None
         self.h_2 = None
-
+        self.eta = 1.0
+        self.s_noise = 1.0
 
     def step(self, latents, model_outputs, i):
         x = self._scaling(latents, self.sigmas[i])        
-        denoised = self._to_denoised(self.sigmas[i], model_outputs, x)
-
-        
+        denoised = self._to_denoised(self.sigmas[i], model_outputs, x)        
         if self.sigmas[i + 1] == 0:
             # Denoising step
             x = denoised

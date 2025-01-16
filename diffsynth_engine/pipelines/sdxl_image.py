@@ -182,15 +182,6 @@ class SDXLImagePipeline(BasePipeline):
     def denoising_model(self):
         return self.unet
 
-    def encode_image(self, image: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
-        latents = self.vae_encoder(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        return latents
-
-    def decode_image(self, latent: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
-        vae_dtype = self.vae_decoder.conv_in.weight.dtype
-        image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        return image
-
     def encode_prompt(self, prompt, clip_skip):
         input_ids = tokenize_long_prompt(
             self.tokenizer, prompt).to(self.device)        
@@ -316,6 +307,7 @@ class SDXLImagePipeline(BasePipeline):
             cfg_scale: float = 7.5,
             clip_skip: int = 2,
             input_image: Image.Image | None = None,
+            mask_image: Image.Image | None = None,
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
@@ -330,29 +322,12 @@ class SDXLImagePipeline(BasePipeline):
         latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
                                       dtype=self.dtype)
 
-        # Prepare scheduler
-        if input_image is not None:
-            # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
-            total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
-            t_start = max(total_steps - num_inference_steps, 0)
-            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
-            timesteps = timesteps[t_start:]
-
-            self.load_models_to_device(['vae_encoder'])
-            noise = latents
-            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image)
-            latents = self.sampler.add_noise(latents, noise, sigma_start)
-        else:
-            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
-            # k-diffusion
-            # if you have any questions about this, please ask @dizhipeng.dzp for more details
-            latents = latents * sigmas[0] / ((sigmas[0] ** 2 + 1) ** 0.5)
-        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
-
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(latents, input_image, denoising_strength, num_inference_steps)
+        mask, overlay_image = None, None
+        if mask_image is not None:
+            mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
         # Initialize sampler
-        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
+        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder', 'text_encoder_2'])
@@ -384,16 +359,20 @@ class SDXLImagePipeline(BasePipeline):
             )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
-
             # UI
             if progress_bar_st is not None:
                 progress_bar_st.progress(i / len(timesteps))
-
+        if mask_image is not None:
+            latents = latents * mask + init_latents * (1 - mask)
         # Decode image
         self.load_models_to_device(['vae_decoder'])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-
+        
+        if mask_image is not None:
+            image = image.convert("RGBA")
+            image.alpha_composite(overlay_image)
+            image = image.convert("RGB")            
         # offload all models
         self.load_models_to_device([])
         return image

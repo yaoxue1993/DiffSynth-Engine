@@ -5,20 +5,15 @@ class DPMSolverPlusPlus2MSDESampler(EpsilonSampler):
     """
     DPM Solver++ 2M SDE sampler
     """
-    def __init__(self, solver_type='mid_point'):
-        if solver_type not in {'heun', 'midpoint'}:
-            raise ValueError('solver_type must be \'heun\' or \'midpoint\'')
-        self.solver_type = solver_type
-        self.eta = 1.0
-        self.s_noise = 1.0
-
-    def initialize(self, latents, timesteps, sigmas):
+    def initialize(self, init_latents, timesteps, sigmas, mask):
+        super().initialize(init_latents, timesteps, sigmas, mask)
         sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-        self.noise_sampler = BrownianTreeNoiseSampler(latents, sigma_min, sigma_max)
-        self.timesteps = timesteps
-        self.sigmas = sigmas
+        self.noise_sampler = BrownianTreeNoiseSampler(init_latents, sigma_min, sigma_max)
         self.old_denoised = None    
         self.h_last = None
+        self.eta = 1.0
+        self.s_noise = 1.0
+        self.solver_type = 'heun' # {'heun', 'midpoint'}
 
     def step(self, latents, model_outputs, i):
         x = self._scaling(latents, self.sigmas[i])

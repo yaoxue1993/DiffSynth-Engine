@@ -2,8 +2,8 @@ import os
 import torch
 import numpy as np
 from typing import Dict, List
-from PIL import Image
-
+from PIL import Image, ImageOps
+from einops import repeat
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -31,7 +31,11 @@ class BasePipeline:
 
     @staticmethod
     def preprocess_image(image: Image.Image) -> torch.Tensor:
-        image = torch.Tensor(np.array(image, dtype=np.float32) * (2 / 255) - 1).permute(2, 0, 1).unsqueeze(0)
+        image_array = np.array(image, dtype=np.float32)
+        if len(image_array.shape) == 2:
+            image_array = image_array[:, :, np.newaxis]
+            
+        image = torch.Tensor((image_array / 255) * 2 - 1).permute(2, 0, 1).unsqueeze(0)
         return image
 
     @staticmethod
@@ -50,6 +54,58 @@ class BasePipeline:
         noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
         return noise
 
+    def encode_image(self, image: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
+        latents = self.vae_encoder(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        return latents
+
+    def decode_image(self, latent: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
+        vae_dtype = self.vae_decoder.conv_in.weight.dtype
+        image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+        return image
+
+    def prepare_mask(self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8) -> torch.Tensor:
+        height, width = mask_image.size
+        # mask
+        mask = torch.Tensor(np.array(mask_image) / 255).unsqueeze(0).unsqueeze(0)
+        mask = torch.nn.functional.interpolate(
+            mask, size=(height // vae_scale_factor, width // vae_scale_factor)
+        )
+        mask = repeat(mask, 'b 1 h w -> b 4 h w')
+        mask = mask.to(self.device, self.dtype)
+        # overlay_image
+        overlay_image = Image.new("RGBa", (width, height))
+        overlay_image.paste(
+            input_image.convert("RGBA").convert("RGBa"), mask=ImageOps.invert(mask_image.convert("L"))
+        )
+        overlay_image = overlay_image.convert("RGBA")
+        # mask: [1, 4, H, W]  = mask_image[1, 1, H//8, W//8] * 4
+        # overlay_image: [1, 4, H, W]  = mask_image[1, 1, H, W] + input_image[1, 3, H, W]
+        return mask, overlay_image
+
+    def prepare_latents(self, latents, input_image, denoising_strength, num_inference_steps):
+        # Prepare scheduler
+        if input_image is not None:
+            total_steps = num_inference_steps
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
+            t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
+            sigma_start, sigmas = sigmas[t_start-1], sigmas[t_start-1:]
+            timesteps = timesteps[t_start-1:]
+            
+            self.load_models_to_device(['vae_encoder'])
+            noise = latents
+            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
+            latents = self.encode_image(image)
+            init_latents = latents.clone()
+            latents = self.sampler.add_noise(latents, noise, sigma_start)
+        else:
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)
+            # k-diffusion
+            # if you have any questions about this, please ask @dizhipeng.dzp for more details
+            latents = latents * sigmas[0] / ((sigmas[0] ** 2 + 1) ** 0.5)
+            init_latents = latents.clone()
+        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
+        return init_latents, latents, sigmas, timesteps
+    
     def eval(self):
         for model_name in self.model_names:
             model = getattr(self, model_name)

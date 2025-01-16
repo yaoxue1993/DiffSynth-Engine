@@ -1,15 +1,7 @@
 import torch
 from .epsilon import EpsilonSampler
 
-class DDPMSampler(EpsilonSampler):
-    def __init__(self):
-        pass
-
-    def initialize(self, latents, timesteps, sigmas):
-        self.sigmas = sigmas
-        self.timesteps = timesteps
-
-    
+class DDPMSampler(EpsilonSampler):    
     def _step_function(self, x, sigma, sigma_prev, noise):
         alpha_cumprod = 1 / ((sigma * sigma) + 1)
         alpha_cumprod_prev = 1 / ((sigma_prev * sigma_prev) + 1)

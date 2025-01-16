@@ -175,6 +175,8 @@ class FluxImagePipeline(BasePipeline):
                  dit: FluxDiT,
                  vae_decoder: FluxVAEDecoder,
                  vae_encoder: FluxVAEEncoder,
+                 use_cfg: bool = False,
+                 batch_cfg: bool = True,
                  device: str = 'cuda:0',
                  dtype: torch.dtype = torch.bfloat16):
         super().__init__(device=device, dtype=dtype)
@@ -188,6 +190,8 @@ class FluxImagePipeline(BasePipeline):
         self.dit = dit
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
+        self.use_cfg = use_cfg
+        self.batch_cfg = batch_cfg
         self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
 
     @classmethod
@@ -275,96 +279,98 @@ class FluxImagePipeline(BasePipeline):
     def denoising_model(self):
         return self.dit
 
-    def encode_image(self, image: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
-        latents = self.vae_encoder(image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        return latents
+    def encode_prompt(self, prompt, clip_skip: int = 2):
+        input_ids = self.tokenizer(prompt, max_length=77)["input_ids"].to(device=self.device)
+        _, add_text_embeds = self.text_encoder_1(input_ids, clip_skip=clip_skip)
 
-    def decode_image(self, latent: torch.Tensor, tiled=False, tile_size=64, tile_stride=32) -> torch.Tensor:
-        image = self.vae_decoder(latent.to(self.device), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        return image
-
-    def encode_prompt(self, prompt, clip_sequence_length=77, t5_sequence_length=512):
-        input_ids = self.tokenizer(prompt, max_length=clip_sequence_length)["input_ids"].to(device=self.device)
-        _, pooled_prompt_emb = self.text_encoder_1(input_ids)
-
-        input_ids = self.tokenizer_2(prompt, max_length=t5_sequence_length)["input_ids"].to(device=self.device)
+        input_ids = self.tokenizer_2(prompt, max_length=512)["input_ids"].to(device=self.device)
         prompt_emb = self.text_encoder_2(input_ids)
 
         text_ids = torch.zeros(prompt_emb.shape[0], prompt_emb.shape[1], 3).to(device=self.device,
                                                                                dtype=prompt_emb.dtype)
-        return {"prompt_emb": prompt_emb, "pooled_prompt_emb": pooled_prompt_emb, "text_ids": text_ids}
+        return prompt_emb, add_text_embeds, text_ids
 
-    def prepare_extra_input(self, latents=None, guidance=1.0):
-        latent_image_ids = self.dit.prepare_image_ids(latents)
+    def prepare_extra_input(self, latents, positive_prompt_emb, guidance=1.0):
+        image_ids = self.dit.prepare_image_ids(latents)
         guidance = torch.tensor([guidance] * latents.shape[0], device=latents.device, dtype=latents.dtype)
-        return {"image_ids": latent_image_ids, "guidance": guidance}
+        text_ids = torch.zeros(positive_prompt_emb.shape[0], positive_prompt_emb.shape[1], 3).to(device=self.device, dtype=positive_prompt_emb.dtype)
+        return image_ids, text_ids, guidance
 
+    def predict_noise_with_cfg(
+        self,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        positive_prompt_emb: torch.Tensor,
+        negative_prompt_emb: torch.Tensor,
+        positive_add_text_embeds: torch.Tensor,
+        negative_add_text_embeds: torch.Tensor,
+        image_ids: torch.Tensor,
+        text_ids: torch.Tensor,
+        cfg_scale: float,
+        guidance: torch.Tensor,
+        use_cfg: bool = True,
+        batch_cfg: bool = True
+    ):
+        if cfg_scale <= 1.0 or not use_cfg:
+            return self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance)
+        if not batch_cfg:
+            # cfg by predict noise one by one
+            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance)
+            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, negative_add_text_embeds, image_ids, text_ids, guidance)
+            noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
+            return noise_pred
+        else:
+            # cfg by predict noise in one batch
+            prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
+            add_text_embeds = torch.cat([positive_add_text_embeds, negative_add_text_embeds], dim=0)
+            latents = torch.cat([latents, latents], dim=0)
+            timestep = torch.cat([timestep, timestep], dim=0)            
+            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, add_text_embeds, image_ids, text_ids, guidance)
+            noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
+            return noise_pred
+            
     def predict_noise(self,
-                      hidden_states: torch.Tensor,
-                      timestep: torch.Tensor,
-                      prompt_emb: torch.Tensor,
-                      pooled_prompt_emb: torch.Tensor,
-                      guidance: torch.Tensor,
-                      text_ids: torch.Tensor,
-                      image_ids: torch.Tensor | None = None,
-                      tiled: bool = False,
-                      tile_size: int = 128,
-                      tile_stride: int = 64,
-                      ):
-        if tiled:
-            def flux_forward_fn(hl, hr, wl, wr):
-                return self.predict_noise(
-                    hidden_states=hidden_states[:, :, hl: hr, wl: wr],
-                    timestep=timestep,
-                    prompt_emb=prompt_emb,
-                    pooled_prompt_emb=pooled_prompt_emb,
-                    guidance=guidance,
-                    text_ids=text_ids,
-                    image_ids=None,
-                    tiled=False,
-                )
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        add_text_embeds: torch.Tensor,
+        image_ids: torch.Tensor,
+        text_ids: torch.Tensor,
+        guidance: float,
+    ):
+        noise_pred = self.dit.unet(
+            hidden_states=latents, 
+            timestep=timestep, 
+            prompt_emb=prompt_emb,
+            pooled_prompt_emb=add_text_embeds,
+            guidance=guidance,
+            text_ids=text_ids,
+            image_ids=image_ids,
+        )
+        return noise_pred
 
-            return FastTileWorker().tiled_forward(
-                flux_forward_fn,
-                hidden_states,
-                tile_size=tile_size,
-                tile_stride=tile_stride,
-                tile_device=hidden_states.device,
-                tile_dtype=hidden_states.dtype
-            )
+    def prepare_latents(self, latents, input_image, denoising_strength, num_inference_steps, mu):
+        # Prepare scheduler
+        if input_image is not None:
+            total_steps = num_inference_steps
+            sigmas = torch.linspace(1.0, 1 / total_steps, total_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigmas=sigmas)
+            t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
+            sigma_start, sigmas = sigmas[t_start-1], sigmas[t_start-1:]
+            timesteps = timesteps[t_start-1:]
 
-        if image_ids is None:
-            image_ids = self.dit.prepare_image_ids(hidden_states)
-
-        # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
-        # addition of floating point numbers does not meet commutative law
-        conditioning = self.dit.time_embedder(timestep, hidden_states.dtype)
-        if self.dit.guidance_embedder is not None:
-            guidance = guidance * 1000
-            conditioning += self.dit.guidance_embedder(guidance, hidden_states.dtype)
-        conditioning += self.dit.pooled_text_embedder(pooled_prompt_emb)
-        prompt_emb = self.dit.context_embedder(prompt_emb)
-        image_rotary_emb = self.dit.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
-
-        height, width = hidden_states.shape[-2:]
-        hidden_states = self.dit.patchify(hidden_states)
-        hidden_states = self.dit.x_embedder(hidden_states)
-
-        # Joint Blocks
-        for block_id, block in enumerate(self.dit.blocks):
-            hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-
-        # Single Blocks
-        hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-        for block_id, block in enumerate(self.dit.single_blocks):
-            hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-        hidden_states = hidden_states[:, prompt_emb.shape[1]:]
-
-        hidden_states = self.dit.final_norm_out(hidden_states, conditioning)
-        hidden_states = self.dit.final_proj_out(hidden_states)
-        hidden_states = self.dit.unpatchify(hidden_states, height, width)
-
-        return hidden_states
+            self.load_models_to_device(['vae_encoder'])
+            noise = latents
+            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
+            latents = self.encode_image(image)
+            init_latents = latents.clone()
+            latents = self.sampler.add_noise(latents, noise, sigma_start)
+        else:
+            sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
+            init_latents = latents.clone()
+        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
+        return init_latents, latents, sigmas, timesteps
 
     @torch.no_grad()
     def __call__(
@@ -372,13 +378,13 @@ class FluxImagePipeline(BasePipeline):
             prompt: str,
             negative_prompt: str = "",
             cfg_scale: float = 1.0,
-            embedded_guidance: float = 3.5,
+            clip_skip: int = 2,
             input_image: Image.Image | None = None,
+            mask_image: Image.Image | None = None,
             denoising_strength: float = 1.0,
             height: int = 1024,
             width: int = 1024,
             num_inference_steps: int = 30,
-            t5_sequence_length: int = 512,
             tiled: bool = False,
             tile_size: int = 128,
             tile_stride: int = 64,
@@ -391,69 +397,55 @@ class FluxImagePipeline(BasePipeline):
 
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
-        # Prepare scheduler
-        if input_image is not None:
-            # eg. num_inference_steps = 20, denoising_strength = 0.6, total_steps = 33, t_start = 13
-            total_steps = max(int(num_inference_steps / denoising_strength), num_inference_steps)
-            sigmas = torch.linspace(1.0, 1 / total_steps, total_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigmas=sigmas)
-            t_start = max(total_steps - num_inference_steps, 0)
-            sigma_start, sigmas = sigmas[t_start], sigmas[t_start:]
-            timesteps = timesteps[t_start:]
-
-            self.load_models_to_device(['vae_encoder'])
-            noise = latents
-            image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image)
-            latents = self.sampler.add_noise(latents, noise, sigma_start)
-        else:
-            sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
-        sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
-
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(latents, input_image, denoising_strength, num_inference_steps, mu)
+        mask, overlay_image = None, None
+        if mask_image is not None:
+            mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
         # Initialize sampler
-        self.sampler.initialize(latents=latents, timesteps=timesteps, sigmas=sigmas)
+        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Encode prompts
         self.load_models_to_device(['text_encoder_1', 'text_encoder_2'])
-        positive_prompt_emb = self.encode_prompt(prompt, t5_sequence_length=t5_sequence_length)
-        if cfg_scale != 1.0:
-            negative_prompt_emb = self.encode_prompt(negative_prompt, t5_sequence_length=t5_sequence_length)
+        positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
+        negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
 
         # Extra input
-        extra_input = self.prepare_extra_input(latents, guidance=embedded_guidance)
+        image_ids, text_ids, guidance = self.prepare_extra_input(latents, positive_prompt_emb, guidance=3.5)
 
         # Denoise
         self.load_models_to_device(['dit'])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
-            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
-
-            # Classifier-free guidance
-            positive_noise_pred = self.predict_noise(
-                hidden_states=latents, timestep=timestep,
-                **positive_prompt_emb, **extra_input,
+            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)        
+            noise_pred = self.predict_noise_with_cfg(
+                latents=latents, 
+                timestep=timestep,
+                positive_prompt_emb=positive_prompt_emb, 
+                negative_prompt_emb=negative_prompt_emb,
+                positive_add_text_embeds=positive_add_text_embeds, 
+                negative_add_text_embeds=negative_add_text_embeds,
+                image_ids=image_ids,
+                text_ids=text_ids,
+                cfg_scale=cfg_scale, 
+                guidance=guidance,
+                use_cfg=self.use_cfg,
+                batch_cfg=self.batch_cfg
             )
-            if cfg_scale != 1.0:
-                negative_noise_pred = self.predict_noise(
-                    hidden_states=latents, timestep=timestep,
-                    **negative_prompt_emb, **extra_input,
-                )
-                noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
-            else:
-                noise_pred = positive_noise_pred
-
-            # Iterate
+            # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
-
             # UI
             if progress_bar_st is not None:
                 progress_bar_st.progress(i / len(timesteps))
-
+        if mask_image is not None:
+            latents = latents * mask + init_latents * (1 - mask)
         # Decode image
         self.load_models_to_device(['vae_decoder'])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-
+        # Paste Overlay Image 
+        if mask_image is not None:
+            image = image.convert("RGBA")
+            image.alpha_composite(overlay_image)
+            image = image.convert("RGB")            
         # Offload all models
         self.load_models_to_device([])
         return image
