@@ -19,7 +19,6 @@ class TestFLUXImage(ImageTestCase):
             prompt="A cat holding a sign that says hello world",
             width=1024,
             height=1024,
-            embedded_guidance=3.5,
             num_inference_steps=50,
             seed=42,
         )
@@ -45,7 +44,6 @@ class TestFLUXImage(ImageTestCase):
             prompt="1 girl, maria",
             width=1024,
             height=1024,
-            embedded_guidance=3.5,
             num_inference_steps=50,
             seed=42,
         )
@@ -59,7 +57,6 @@ class TestFLUXImage(ImageTestCase):
             prompt="1 girl, maria",
             width=1024,
             height=1024,
-            embedded_guidance=3.5,
             num_inference_steps=50,
             seed=42,
         )
