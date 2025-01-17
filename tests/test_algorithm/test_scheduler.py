@@ -1,7 +1,7 @@
 import unittest
 import torch
 from ..common.test_case import ImageTestCase
-from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler
+from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler, DDIMScheduler, SGMUniformScheduler
 from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import RecifitedFlowScheduler
 from diffsynth_engine.pipelines.flux_image import calculate_shift
 
@@ -30,7 +30,7 @@ class TestScheduler(ImageTestCase):
     def test_beta_scheduler(self):
         scheduler = BetaScheduler()
         sigmas, timesteps = scheduler.schedule(20)
-        expect_tensors = self.get_expect_tensor("algorithm/beta_20steps.safetensors")        
+        expect_tensors = self.get_expect_tensor("algorithm/beta_20steps.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
 
@@ -52,7 +52,20 @@ class TestScheduler(ImageTestCase):
         expect_tensors = self.get_expect_tensor("algorithm/recifited_flow_20steps_sd3.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
-    
+
+    def test_ddim_scheduler(self):
+        scheduler = DDIMScheduler()
+        sigmas, timesteps = scheduler.schedule(20)
+        expect_tensors = self.get_expect_tensor("algorithm/ddim_20steps.safetensors")
+        self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
+        self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
+
+    def test_ddim_scheduler(self):
+        scheduler = SGMUniformScheduler()
+        sigmas, timesteps = scheduler.schedule(20)
+        expect_tensors = self.get_expect_tensor("algorithm/sgm_uniform_20steps.safetensors")
+        self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
+        self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
 
 if __name__ == "__main__":
     unittest.main()

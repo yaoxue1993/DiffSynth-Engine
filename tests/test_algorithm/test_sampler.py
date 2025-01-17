@@ -1,5 +1,5 @@
-from diffsynth_engine.algorithm.sampler import EulerSampler, FlowMatchEulerSampler
-from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, RecifitedFlowScheduler
+from diffsynth_engine.algorithm.sampler import EulerSampler, FlowMatchEulerSampler, DEISSampler
+from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, RecifitedFlowScheduler, DDIMScheduler
 from ..common.test_case import ImageTestCase
 from diffsynth_engine.pipelines.flux_image import calculate_shift
 import torch
@@ -37,3 +37,16 @@ class TestSampler(ImageTestCase):
         results = sampler.step(origin_sample, model_output, 10)
         self.assertTensorEqual(results, prev_sample)
 
+    def test_deis_sampler(self):
+        num_inference_steps = 20
+        scheduler = DDIMScheduler()
+        sigmas, timesteps = scheduler.schedule(num_inference_steps)
+        sampler = DEISSampler()
+        sampler.initialize(None, timesteps, sigmas)
+        for i in range(0, 4):
+            expect_tensor = self.get_expect_tensor(f"algorithm/deis_i{i}.safetensors")
+            origin_sample = expect_tensor["origin_sample"]
+            model_output = expect_tensor["model_output"]
+            prev_sample = expect_tensor["prev_sample"]
+            results = sampler.step(origin_sample, model_output, i)
+            self.assertTensorEqual(results, prev_sample)
