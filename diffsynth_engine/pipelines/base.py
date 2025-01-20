@@ -63,14 +63,14 @@ class BasePipeline:
         image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return image
 
-    def prepare_mask(self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8) -> torch.Tensor:
+    def prepare_mask(self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4) -> torch.Tensor:
         height, width = mask_image.size
         # mask
         mask = torch.Tensor(np.array(mask_image) / 255).unsqueeze(0).unsqueeze(0)
         mask = torch.nn.functional.interpolate(
             mask, size=(height // vae_scale_factor, width // vae_scale_factor)
         )
-        mask = repeat(mask, 'b 1 h w -> b 4 h w')
+        mask = repeat(mask, 'b 1 h w -> b c h w', c=latent_channels)
         mask = mask.to(self.device, self.dtype)
         # overlay_image
         overlay_image = Image.new("RGBa", (width, height))

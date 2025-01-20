@@ -5,6 +5,7 @@ import math
 from typing import Callable, Dict, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
+from einops import rearrange
 from tqdm import tqdm
 from PIL import Image
 
@@ -86,7 +87,6 @@ class FluxLoRAConverter(LoRAStateDictConverter):
             else:
                 raise ValueError(f"Unsupported key: {key}")
         return {"dit": dit_dict, "text_encoder_1": te_dict}
-
 
     def _from_diffusers(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         dit_dict = {}
@@ -286,9 +286,7 @@ class FluxImagePipeline(BasePipeline):
         input_ids = self.tokenizer_2(prompt, max_length=512)["input_ids"].to(device=self.device)
         prompt_emb = self.text_encoder_2(input_ids)
 
-        text_ids = torch.zeros(prompt_emb.shape[0], prompt_emb.shape[1], 3).to(device=self.device,
-                                                                               dtype=prompt_emb.dtype)
-        return prompt_emb, add_text_embeds, text_ids
+        return prompt_emb, add_text_embeds
 
     def prepare_extra_input(self, latents, positive_prompt_emb, guidance=1.0):
         image_ids = self.dit.prepare_image_ids(latents)
@@ -338,7 +336,7 @@ class FluxImagePipeline(BasePipeline):
         text_ids: torch.Tensor,
         guidance: float,
     ):
-        noise_pred = self.dit.unet(
+        noise_pred = self.dit(
             hidden_states=latents, 
             timestep=timestep, 
             prompt_emb=prompt_emb,
@@ -392,15 +390,15 @@ class FluxImagePipeline(BasePipeline):
             progress_bar_cmd: Callable = tqdm,
             progress_bar_st: ModuleType | None = None,
     ):
-        latents = self.generate_noise((1, 16, height // 8, width // 8), seed=seed,
+        noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed,
                                       device="cpu", dtype=self.dtype).to(device=self.device)
 
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(latents, input_image, denoising_strength, num_inference_steps, mu)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, input_image, denoising_strength, num_inference_steps, mu)
         mask, overlay_image = None, None
         if mask_image is not None:
-            mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
+            mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8, latent_channels=16)
         # Initialize sampler
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
@@ -408,7 +406,7 @@ class FluxImagePipeline(BasePipeline):
         self.load_models_to_device(['text_encoder_1', 'text_encoder_2'])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
         negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
-
+        
         # Extra input
         image_ids, text_ids, guidance = self.prepare_extra_input(latents, positive_prompt_emb, guidance=3.5)
 
@@ -429,14 +427,15 @@ class FluxImagePipeline(BasePipeline):
                 guidance=guidance,
                 use_cfg=self.use_cfg,
                 batch_cfg=self.batch_cfg
-            )
+            )            
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
+            if mask_image is not None:
+                sample = sigmas[i] * noise + (1.0 - sigmas[i]) * init_latents            
+                latents = latents * mask + sample * (1 - mask)
             # UI
             if progress_bar_st is not None:
                 progress_bar_st.progress(i / len(timesteps))
-        if mask_image is not None:
-            latents = latents * mask + init_latents * (1 - mask)
         # Decode image
         self.load_models_to_device(['vae_decoder'])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)

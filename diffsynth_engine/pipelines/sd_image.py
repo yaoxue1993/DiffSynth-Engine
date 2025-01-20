@@ -301,9 +301,9 @@ class SDImagePipeline(BasePipeline):
             progress_bar_st: ModuleType | None = None,
     ):
         
-        latents = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
+        noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(latents, input_image, denoising_strength, num_inference_steps)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, input_image, denoising_strength, num_inference_steps)
         mask, overlay_image = None, None
         if mask_image is not None:
             mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
