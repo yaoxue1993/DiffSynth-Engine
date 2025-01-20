@@ -2,6 +2,8 @@ from .stable_diffusion.linear import ScaledLinearScheduler
 from .stable_diffusion.beta import BetaScheduler
 from .stable_diffusion.karras import KarrasScheduler
 from .stable_diffusion.exponential import ExponentialScheduler
+from .stable_diffusion.ddim import DDIMScheduler
+from .stable_diffusion.sgm_uniform import SGMUniformScheduler
 from .flow_match.recifited_flow import RecifitedFlowScheduler
 
 __all__ = [
@@ -9,6 +11,8 @@ __all__ = [
     "BetaScheduler",
     "KarrasScheduler",
     "ExponentialScheduler",
+    "DDIMScheduler",
+    "SGMUniformScheduler",
     "RecifitedFlowScheduler"
 ]
 
