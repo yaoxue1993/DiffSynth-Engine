@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
+import logging
 
+logger = logging.getLogger(__name__)
 
 def low_version_attention(query, key, value, attn_bias=None, scale=None):
     scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
@@ -40,6 +42,12 @@ class Attention(nn.Module):
 
         self.scale = scale
         self.use_xformers = use_xformers
+        if self.use_xformers:   
+            try:
+                from xformers.ops import memory_efficient_attention
+            except:
+                logger.warning("xformers is not supported in this platform, so use_xformers is set to False")
+                self.use_xformers = False
 
     def sdpa_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         q = self.to_q(hidden_states)
