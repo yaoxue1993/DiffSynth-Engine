@@ -20,14 +20,17 @@ from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
 from diffsynth_engine.conf.keymap import (
-    flux_civitai_dit_rename_dict, flux_civitai_dit_suffix_rename_dict,
-    flux_civitai_clip_rename_dict, flux_civitai_clip_attn_rename_dict
+    flux_civitai_dit_rename_dict,
+    flux_civitai_dit_suffix_rename_dict,
+    flux_civitai_clip_rename_dict,
+    flux_civitai_clip_attn_rename_dict,
 )
 
 logger = logging.get_logger(__name__)
 
+
 class FluxLoRAConverter(LoRAStateDictConverter):
-    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:            
+    def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         dit_dict = {}
         te_dict = {}
         for key, param in lora_state_dict.items():
@@ -35,9 +38,9 @@ class FluxLoRAConverter(LoRAStateDictConverter):
             if ".alpha" not in key:
                 continue
             if "lora_unet" in key:
-                key = key.replace("lora_unet_", "")                
-                key = re.sub(r'(\d+)_', r'\1.', key)
-                key = re.sub(r'_(\d+)', r'.\1', key)
+                key = key.replace("lora_unet_", "")
+                key = re.sub(r"(\d+)_", r"\1.", key)
+                key = re.sub(r"_(\d+)", r".\1", key)
                 key = key.replace("modulation_lin", "modulation.lin")
                 key = key.replace("mod_lin", "mod.lin")
                 key = key.replace("attn_qkv", "attn.qkv")
@@ -59,7 +62,7 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 lora_args["alpha"] = param
                 lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
                 lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
-                lora_args["rank"] = lora_args['up'].shape[1]                
+                lora_args["rank"] = lora_args["up"].shape[1]
                 rename = rename.replace(".weight", "")
                 dit_dict[rename] = lora_args
             elif "lora_te" in key:
@@ -78,11 +81,11 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 else:
                     raise ValueError(f"Unsupported key: {key}")
                 lora_args = {}
-                lora_args['alpha'] = param
-                lora_args['up'] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+                lora_args["alpha"] = param
+                lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
                 lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
-                lora_args["rank"] = lora_args['up'].shape[1]
-                rename = rename.replace(".weight", "")                
+                lora_args["rank"] = lora_args["up"].shape[1]
+                rename = rename.replace(".weight", "")
                 te_dict[rename] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
@@ -96,11 +99,13 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 continue
             key = key.replace(".alpha", ".weight")
             key = key.replace("transformer.", "")
-            if "single_transformer_blocks" in key: # transformer.single_transformer_blocks.0.attn.to_k.weight
-                key = key.replace("single_transformer_blocks", "single_blocks") # single_transformer_blocks.0.attn.to_k.weight
+            if "single_transformer_blocks" in key:  # transformer.single_transformer_blocks.0.attn.to_k.weight
+                key = key.replace(
+                    "single_transformer_blocks", "single_blocks"
+                )  # single_transformer_blocks.0.attn.to_k.weight
                 key = key.replace("norm.linear", "modulation.lin")
                 key = key.replace("proj_out", "linear2")
-                key = key.replace("attn", "linear1")   # linear1 = [to_q, to_k, to_v, mlp]
+                key = key.replace("attn", "linear1")  # linear1 = [to_q, to_k, to_v, mlp]
                 key = key.replace("proj_mlp", "linear1.mlp")
             elif "transformer_blocks" in key:
                 key = key.replace("transformer_blocks", "double_blocks")
@@ -135,10 +140,10 @@ class FluxLoRAConverter(LoRAStateDictConverter):
             else:
                 raise ValueError(f"Unsupported key: {key}")
             lora_args = {}
-            lora_args['alpha'] = param
-            lora_args['up'] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
+            lora_args["alpha"] = param
+            lora_args["up"] = lora_state_dict[origin_key.replace(".alpha", ".lora_up.weight")]
             lora_args["down"] = lora_state_dict[origin_key.replace(".alpha", ".lora_down.weight")]
-            lora_args["rank"] = lora_args['up'].shape[1]
+            lora_args["rank"] = lora_args["up"].shape[1]
             key = key.replace(".weight", "")
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
@@ -153,11 +158,11 @@ class FluxLoRAConverter(LoRAStateDictConverter):
 
 
 def calculate_shift(
-        image_seq_len,
-        base_seq_len: int = 256,
-        max_seq_len: int = 4096,
-        base_shift: float = 0.5,
-        max_shift: float = 1.15,
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.15,
 ):
     m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
     b = base_shift - m * base_seq_len
@@ -167,18 +172,21 @@ def calculate_shift(
 
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
-    def __init__(self,
-                 tokenizer: CLIPTokenizer,
-                 tokenizer_2: T5TokenizerFast,
-                 text_encoder_1: FluxTextEncoder1,
-                 text_encoder_2: FluxTextEncoder2,
-                 dit: FluxDiT,
-                 vae_decoder: FluxVAEDecoder,
-                 vae_encoder: FluxVAEEncoder,
-                 use_cfg: bool = False,
-                 batch_cfg: bool = True,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.bfloat16):
+
+    def __init__(
+        self,
+        tokenizer: CLIPTokenizer,
+        tokenizer_2: T5TokenizerFast,
+        text_encoder_1: FluxTextEncoder1,
+        text_encoder_2: FluxTextEncoder2,
+        dit: FluxDiT,
+        vae_decoder: FluxVAEDecoder,
+        vae_encoder: FluxVAEEncoder,
+        use_cfg: bool = False,
+        batch_cfg: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__(device=device, dtype=dtype)
         self.noise_scheduler = RecifitedFlowScheduler(shift=3.0, use_dynamic_shifting=True)
         self.sampler = FlowMatchEulerSampler()
@@ -192,12 +200,16 @@ class FluxImagePipeline(BasePipeline):
         self.vae_encoder = vae_encoder
         self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
-        self.model_names = ['text_encoder_1', 'text_encoder_2', 'dit', 'vae_decoder', 'vae_encoder']
+        self.model_names = ["text_encoder_1", "text_encoder_2", "dit", "vae_decoder", "vae_encoder"]
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16,
-                        cpu_offload: bool = False) -> "FluxImagePipeline":
+    def from_pretrained(
+        cls,
+        pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        cpu_offload: bool = False,
+    ) -> "FluxImagePipeline":
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
@@ -206,8 +218,7 @@ class FluxImagePipeline(BasePipeline):
             pretrained_model_paths = [pretrained_model_paths]
 
         for path in pretrained_model_paths:
-            assert os.path.isfile(path) and path.endswith(".safetensors"), \
-                f"{path} is not a .safetensors file"
+            assert os.path.isfile(path) and path.endswith(".safetensors"), f"{path} is not a .safetensors file"
             logger.info(f"loading state dict from {path} ...")
             state_dict = load_file(path, device="cpu")
             loaded_state_dict.update(state_dict)
@@ -217,8 +228,8 @@ class FluxImagePipeline(BasePipeline):
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             dit = FluxDiT.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-            text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)        
-        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)        
+            text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
         vae_decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
         vae_encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
 
@@ -238,7 +249,7 @@ class FluxImagePipeline(BasePipeline):
         return pipe
 
     def patch_lora(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
-        for (lora_path, lora_scale) in lora_list:
+        for lora_path, lora_scale in lora_list:
             state_dict = load_file(lora_path, device="cpu")
             lora_state_dict = self.lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
@@ -250,19 +261,19 @@ class FluxImagePipeline(BasePipeline):
                     lora_args = {
                         "name": key,
                         "scale": lora_scale,
-                        "rank": param['rank'],
-                        "alpha": param['alpha'],
-                        "up": param['up'],
-                        "down": param['down'],
+                        "rank": param["rank"],
+                        "alpha": param["alpha"],
+                        "up": param["up"],
+                        "down": param["down"],
                         "device": self.device,
                         "dtype": self.dtype,
-                        "save_original_weight": save_original_weight
+                        "save_original_weight": save_original_weight,
                     }
                     if fused:
                         module.add_frozen_lora(**lora_args)
                     else:
-                        module.add_lora(**lora_args)        
-    
+                        module.add_lora(**lora_args)
+
     def unpatch_lora(self):
         for key, module in self.dit.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
@@ -272,8 +283,9 @@ class FluxImagePipeline(BasePipeline):
                 module.clear()
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16) -> "FluxImagePipeline":
+    def from_state_dict(
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16
+    ) -> "FluxImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):
@@ -291,7 +303,9 @@ class FluxImagePipeline(BasePipeline):
     def prepare_extra_input(self, latents, positive_prompt_emb, guidance=1.0):
         image_ids = self.dit.prepare_image_ids(latents)
         guidance = torch.tensor([guidance] * latents.shape[0], device=latents.device, dtype=latents.dtype)
-        text_ids = torch.zeros(positive_prompt_emb.shape[0], positive_prompt_emb.shape[1], 3).to(device=self.device, dtype=positive_prompt_emb.dtype)
+        text_ids = torch.zeros(positive_prompt_emb.shape[0], positive_prompt_emb.shape[1], 3).to(
+            device=self.device, dtype=positive_prompt_emb.dtype
+        )
         return image_ids, text_ids, guidance
 
     def predict_noise_with_cfg(
@@ -307,14 +321,20 @@ class FluxImagePipeline(BasePipeline):
         cfg_scale: float,
         guidance: torch.Tensor,
         use_cfg: bool = True,
-        batch_cfg: bool = True
+        batch_cfg: bool = True,
     ):
         if cfg_scale <= 1.0 or not use_cfg:
-            return self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance)
+            return self.predict_noise(
+                latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance
+            )
         if not batch_cfg:
             # cfg by predict noise one by one
-            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance)
-            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, negative_add_text_embeds, image_ids, text_ids, guidance)
+            positive_noise_pred = self.predict_noise(
+                latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance
+            )
+            negative_noise_pred = self.predict_noise(
+                latents, timestep, negative_prompt_emb, negative_add_text_embeds, image_ids, text_ids, guidance
+            )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
         else:
@@ -322,12 +342,15 @@ class FluxImagePipeline(BasePipeline):
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
             add_text_embeds = torch.cat([positive_add_text_embeds, negative_add_text_embeds], dim=0)
             latents = torch.cat([latents, latents], dim=0)
-            timestep = torch.cat([timestep, timestep], dim=0)            
-            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, add_text_embeds, image_ids, text_ids, guidance)
+            timestep = torch.cat([timestep, timestep], dim=0)
+            positive_noise_pred, negative_noise_pred = self.predict_noise(
+                latents, timestep, prompt_emb, add_text_embeds, image_ids, text_ids, guidance
+            )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
-            
-    def predict_noise(self,
+
+    def predict_noise(
+        self,
         latents: torch.Tensor,
         timestep: torch.Tensor,
         prompt_emb: torch.Tensor,
@@ -337,8 +360,8 @@ class FluxImagePipeline(BasePipeline):
         guidance: float,
     ):
         noise_pred = self.dit(
-            hidden_states=latents, 
-            timestep=timestep, 
+            hidden_states=latents,
+            timestep=timestep,
             prompt_emb=prompt_emb,
             pooled_prompt_emb=add_text_embeds,
             guidance=guidance,
@@ -354,10 +377,10 @@ class FluxImagePipeline(BasePipeline):
             sigmas = torch.linspace(1.0, 1 / total_steps, total_steps)
             sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigmas=sigmas)
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
-            sigma_start, sigmas = sigmas[t_start-1], sigmas[t_start-1:]
-            timesteps = timesteps[t_start-1:]
+            sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
+            timesteps = timesteps[t_start - 1 :]
 
-            self.load_models_to_device(['vae_encoder'])
+            self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
@@ -372,30 +395,35 @@ class FluxImagePipeline(BasePipeline):
 
     @torch.no_grad()
     def __call__(
-            self,
-            prompt: str,
-            negative_prompt: str = "",
-            cfg_scale: float = 1.0,
-            clip_skip: int = 2,
-            input_image: Image.Image | None = None,
-            mask_image: Image.Image | None = None,
-            denoising_strength: float = 1.0,
-            height: int = 1024,
-            width: int = 1024,
-            num_inference_steps: int = 30,
-            tiled: bool = False,
-            tile_size: int = 128,
-            tile_stride: int = 64,
-            seed: int | None = None,
-            progress_bar_cmd: Callable = tqdm,
-            progress_bar_st: ModuleType | None = None,
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        cfg_scale: float = 1.0,
+        clip_skip: int = 2,
+        input_image: Image.Image | None = None,
+        mask_image: Image.Image | None = None,
+        denoising_strength: float = 1.0,
+        height: int = 1024,
+        width: int = 1024,
+        num_inference_steps: int = 30,
+        tiled: bool = False,
+        tile_size: int = 128,
+        tile_stride: int = 64,
+        seed: int | None = None,
+        progress_bar_cmd: Callable = tqdm,
+        progress_bar_st: ModuleType | None = None,
     ):
-        noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed,
-                                      device="cpu", dtype=self.dtype).to(device=self.device)
+        if input_image is not None:
+            height, width = input_image.size
+        noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
+            device=self.device
+        )
 
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, input_image, denoising_strength, num_inference_steps, mu)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(
+            noise, input_image, denoising_strength, num_inference_steps, mu
+        )
         mask, overlay_image = None, None
         if mask_image is not None:
             mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8, latent_channels=16)
@@ -403,48 +431,48 @@ class FluxImagePipeline(BasePipeline):
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Encode prompts
-        self.load_models_to_device(['text_encoder_1', 'text_encoder_2'])
+        self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
         negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
-        
+
         # Extra input
         image_ids, text_ids, guidance = self.prepare_extra_input(latents, positive_prompt_emb, guidance=3.5)
 
         # Denoise
-        self.load_models_to_device(['dit'])
+        self.load_models_to_device(["dit"])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
-            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)        
+            timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
-                latents=latents, 
+                latents=latents,
                 timestep=timestep,
-                positive_prompt_emb=positive_prompt_emb, 
+                positive_prompt_emb=positive_prompt_emb,
                 negative_prompt_emb=negative_prompt_emb,
-                positive_add_text_embeds=positive_add_text_embeds, 
+                positive_add_text_embeds=positive_add_text_embeds,
                 negative_add_text_embeds=negative_add_text_embeds,
                 image_ids=image_ids,
                 text_ids=text_ids,
-                cfg_scale=cfg_scale, 
+                cfg_scale=cfg_scale,
                 guidance=guidance,
                 use_cfg=self.use_cfg,
-                batch_cfg=self.batch_cfg
-            )            
+                batch_cfg=self.batch_cfg,
+            )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
             if mask_image is not None:
-                sample = sigmas[i] * noise + (1.0 - sigmas[i]) * init_latents            
+                sample = sigmas[i] * noise + (1.0 - sigmas[i]) * init_latents
                 latents = latents * mask + sample * (1 - mask)
             # UI
             if progress_bar_st is not None:
                 progress_bar_st.progress(i / len(timesteps))
         # Decode image
-        self.load_models_to_device(['vae_decoder'])
+        self.load_models_to_device(["vae_decoder"])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-        # Paste Overlay Image 
+        # Paste Overlay Image
         if mask_image is not None:
             image = image.convert("RGBA")
             image.alpha_composite(overlay_image)
-            image = image.convert("RGB")            
+            image = image.convert("RGB")
         # Offload all models
         self.load_models_to_device([])
         return image

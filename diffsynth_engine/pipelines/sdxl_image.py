@@ -23,11 +23,10 @@ from diffsynth_engine.conf.keymap import sdxl_civitai_unet_keymap, split_key
 logger = logging.get_logger(__name__)
 
 
-
 class SDXLLoRAConverter(LoRAStateDictConverter):
     def _replace_kohya_te1_key(self, key):
         key = key.replace("lora_te1_text_model_encoder_layers_", "encoders.")
-        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = re.sub(r"(\d+)_", r"\1.", key)
         key = key.replace("mlp_fc1", "fc1")
         key = key.replace("mlp_fc2", "fc2")
         key = key.replace("self_attn_q_proj", "attn.to_q")
@@ -38,7 +37,7 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
 
     def _replace_kohya_te2_key(self, key):
         key = key.replace("lora_te2_text_model_encoder_layers_", "encoders.")
-        key = re.sub(r'(\d+)_', r'\1.', key)
+        key = re.sub(r"(\d+)_", r"\1.", key)
         key = key.replace("mlp_fc1", "fc1")
         key = key.replace("mlp_fc2", "fc2")
         key = key.replace("self_attn_q_proj", "attn.to_q")
@@ -46,12 +45,12 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
         key = key.replace("self_attn_v_proj", "attn.to_v")
         key = key.replace("self_attn_out_proj", "attn.to_out")
         return key
-    
+
     def _replace_kohya_unet_key(self, key):
         key = key.replace("lora_unet_", "model.diffusion_model.")
         key = key.replace("ff_net", "ff.net")
-        key = re.sub(r'(\d+)_', r'\1.', key)
-        key = re.sub(r'_(\d+)', r'.\1', key)
+        key = re.sub(r"(\d+)_", r"\1.", key)
+        key = re.sub(r"_(\d+)", r".\1", key)
         name, suffix = split_key(key)
         if name not in sdxl_civitai_unet_keymap:
             raise ValueError(f"Unsupported key: {key}, name: {name}, suffix: {suffix}")
@@ -65,7 +64,7 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
         for key, param in lora_state_dict.items():
             lora_args = {}
             if ".alpha" not in key:
-                continue            
+                continue
             lora_args["alpha"] = param
             lora_args["up"] = lora_state_dict[key.replace(".alpha", ".lora_up.weight")]
             lora_args["down"] = lora_state_dict[key.replace(".alpha", ".lora_down.weight")]
@@ -73,7 +72,7 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
             key = key.replace(".alpha", "")
             if "lora_te1" in key:
                 key = self._replace_kohya_te1_key(key)
-                te1_dict[key] = lora_args            
+                te1_dict[key] = lora_args
             elif "lora_te2" in key:
                 key = self._replace_kohya_te2_key(key)
                 te2_dict[key] = lora_args
@@ -82,31 +81,32 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
                 unet_dict[key] = lora_args
             else:
                 raise ValueError(f"Unsupported key: {key}")
-        return {"unet": unet_dict, "text_encoder": te1_dict, "text_encoder_2": te2_dict}    
+        return {"unet": unet_dict, "text_encoder": te1_dict, "text_encoder_2": te2_dict}
 
     def convert(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
         key = list(lora_state_dict.keys())[0]
         if "lora_te1" in key or "lora_te2" in key or "lora_unet" in key:
             return self._from_kohya(lora_state_dict)
         raise ValueError(f"Unsupported key: {key}")
-            
-        
+
 
 # TODO: add controlnet/ipadapter/kolors
 class SDXLImagePipeline(BasePipeline):
     lora_converter = SDXLLoRAConverter()
-    def __init__(self,
-                 tokenizer: CLIPTokenizer,
-                 tokenizer_2: CLIPTokenizer,
-                 text_encoder: SDXLTextEncoder,
-                 text_encoder_2: SDXLTextEncoder2,
-                 unet: SDXLUNet,
-                 vae_decoder: SDXLVAEDecoder,
-                 vae_encoder: SDXLVAEEncoder,
-                 batch_cfg: bool = True,
-                 device: str = "cuda",
-                 dtype: torch.dtype = torch.float16
-                 ):
+
+    def __init__(
+        self,
+        tokenizer: CLIPTokenizer,
+        tokenizer_2: CLIPTokenizer,
+        text_encoder: SDXLTextEncoder,
+        text_encoder_2: SDXLTextEncoder2,
+        unet: SDXLUNet,
+        vae_decoder: SDXLVAEDecoder,
+        vae_encoder: SDXLVAEEncoder,
+        batch_cfg: bool = True,
+        device: str = "cuda",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__(device=device, dtype=dtype)
         self.noise_scheduler = ScaledLinearScheduler()
         self.sampler = EulerSampler()
@@ -118,17 +118,21 @@ class SDXLImagePipeline(BasePipeline):
         self.unet = unet
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
-        self.add_time_proj = TemporalTimesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0,
-                                               device=device, dtype=dtype)
+        self.add_time_proj = TemporalTimesteps(
+            num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, device=device, dtype=dtype
+        )
         self.batch_cfg = batch_cfg
-        self.model_names = ['text_encoder', 'text_encoder_2',
-                            'unet', 'vae_decoder', 'vae_encoder']
+        self.model_names = ["text_encoder", "text_encoder_2", "unet", "vae_decoder", "vae_encoder"]
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16,
-                        cpu_offload: bool = False,
-                        batch_cfg: bool = True) -> "SDXLImagePipeline":
+    def from_pretrained(
+        cls,
+        pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+        cpu_offload: bool = False,
+        batch_cfg: bool = True,
+    ) -> "SDXLImagePipeline":
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
@@ -137,8 +141,7 @@ class SDXLImagePipeline(BasePipeline):
             pretrained_model_paths = [pretrained_model_paths]
 
         for path in pretrained_model_paths:
-            assert os.path.isfile(path) and path.endswith(".safetensors"), \
-                f"{path} is not a .safetensors file"
+            assert os.path.isfile(path) and path.endswith(".safetensors"), f"{path} is not a .safetensors file"
             logger.info(f"loading state dict from {path} ...")
             state_dict = load_file(path, device="cpu")
             loaded_state_dict.update(state_dict)
@@ -147,16 +150,11 @@ class SDXLImagePipeline(BasePipeline):
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            text_encoder = SDXLTextEncoder.from_state_dict(
-                loaded_state_dict, device=init_device, dtype=dtype)
-            text_encoder_2 = SDXLTextEncoder2.from_state_dict(
-                loaded_state_dict, device=init_device, dtype=dtype)
-            unet = SDXLUNet.from_state_dict(
-                loaded_state_dict, device=init_device, dtype=dtype)
-        vae_decoder = SDXLVAEDecoder.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=torch.float32)
-        vae_encoder = SDXLVAEEncoder.from_state_dict(
-            loaded_state_dict, device=init_device, dtype=torch.float32)
+            text_encoder = SDXLTextEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+            text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+            unet = SDXLUNet.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
+        vae_decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
+        vae_encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
 
         pipe = cls(
             tokenizer=tokenizer,
@@ -175,41 +173,37 @@ class SDXLImagePipeline(BasePipeline):
         return pipe
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16) -> "SDXLImagePipeline":
+    def from_state_dict(
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
+    ) -> "SDXLImagePipeline":
         raise NotImplementedError()
 
     def denoising_model(self):
         return self.unet
 
     def encode_prompt(self, prompt, clip_skip):
-        input_ids = tokenize_long_prompt(
-            self.tokenizer, prompt).to(self.device)        
+        input_ids = tokenize_long_prompt(self.tokenizer, prompt).to(self.device)
         prompt_emb_1 = self.text_encoder(input_ids, clip_skip=clip_skip)
 
-        input_ids_2 = tokenize_long_prompt(
-            self.tokenizer_2, prompt).to(self.device)
-        prompt_emb_2, add_text_embeds = self.text_encoder_2(
-            input_ids_2, clip_skip=clip_skip)
+        input_ids_2 = tokenize_long_prompt(self.tokenizer_2, prompt).to(self.device)
+        prompt_emb_2, add_text_embeds = self.text_encoder_2(input_ids_2, clip_skip=clip_skip)
 
         # Merge
         if prompt_emb_1.shape[0] != prompt_emb_2.shape[0]:
             max_batch_size = min(prompt_emb_1.shape[0], prompt_emb_2.shape[0])
-            prompt_emb_1 = prompt_emb_1[: max_batch_size]
-            prompt_emb_2 = prompt_emb_2[: max_batch_size]
+            prompt_emb_1 = prompt_emb_1[:max_batch_size]
+            prompt_emb_2 = prompt_emb_2[:max_batch_size]
         prompt_emb = torch.concatenate([prompt_emb_1, prompt_emb_2], dim=-1)
 
         # For very long prompt, we only use the first 77 tokens to compute `add_text_embeds`.
         add_text_embeds = add_text_embeds[0:1]
-        prompt_emb = prompt_emb.reshape(
-            (1, prompt_emb.shape[0] * prompt_emb.shape[1], -1))
+        prompt_emb = prompt_emb.reshape((1, prompt_emb.shape[0] * prompt_emb.shape[1], -1))
 
         return prompt_emb, add_text_embeds
 
     def prepare_add_time_id(self, latents):
         height, width = latents.shape[2] * 8, latents.shape[3] * 8
-        add_time_id = torch.tensor(
-            [height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
+        add_time_id = torch.tensor([height, width, 0, 0, height, width], device=self.device).repeat(latents.shape[0])
         # original_size_as_tuple(height, width)
         # crop_coords_top_left(0, 0)
         # target_size_as_tuple(height, width)
@@ -232,14 +226,18 @@ class SDXLImagePipeline(BasePipeline):
         negative_add_text_embeds: torch.Tensor,
         add_time_id: torch.Tensor,
         cfg_scale: float,
-        batch_cfg: bool = True
+        batch_cfg: bool = True,
     ):
         if cfg_scale <= 1.0:
             return self.predict_noise(latents, timestep, positive_prompt_emb, add_time_id)
         if not batch_cfg:
             # cfg by predict noise one by one
-            positive_noise_pred = self.predict_noise(latents, timestep, positive_prompt_emb, positive_add_text_embeds, add_time_id)
-            negative_noise_pred = self.predict_noise(latents, timestep, negative_prompt_emb, negative_add_text_embeds, add_time_id)
+            positive_noise_pred = self.predict_noise(
+                latents, timestep, positive_prompt_emb, positive_add_text_embeds, add_time_id
+            )
+            negative_noise_pred = self.predict_noise(
+                latents, timestep, negative_prompt_emb, negative_add_text_embeds, add_time_id
+            )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
         else:
@@ -248,22 +246,26 @@ class SDXLImagePipeline(BasePipeline):
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
             add_text_embeds = torch.cat([positive_add_text_embeds, negative_add_text_embeds], dim=0)
             latents = torch.cat([latents, latents], dim=0)
-            timestep = torch.cat([timestep, timestep], dim=0)            
-            positive_noise_pred, negative_noise_pred = self.predict_noise(latents, timestep, prompt_emb, add_text_embeds, add_time_ids)
+            timestep = torch.cat([timestep, timestep], dim=0)
+            positive_noise_pred, negative_noise_pred = self.predict_noise(
+                latents, timestep, prompt_emb, add_text_embeds, add_time_ids
+            )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
     def predict_noise(self, latents, timestep, prompt_emb, add_text_embeds, add_time_id):
         y = self.prepare_add_embeds(add_text_embeds, add_time_id, self.dtype)
         noise_pred = self.unet(
-            x=latents, timestep=timestep, y=y,
+            x=latents,
+            timestep=timestep,
+            y=y,
             context=prompt_emb,
             device=self.device,
         )
         return noise_pred
-    
+
     def patch_lora(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
-        for (lora_path, lora_scale) in lora_list:
+        for lora_path, lora_scale in lora_list:
             state_dict = load_file(lora_path, device="cpu")
             lora_state_dict = self.lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
@@ -275,13 +277,13 @@ class SDXLImagePipeline(BasePipeline):
                     lora_args = {
                         "name": key,
                         "scale": lora_scale,
-                        "rank": param['rank'],
-                        "alpha": param['alpha'],
-                        "up": param['up'],
-                        "down": param['down'],
+                        "rank": param["rank"],
+                        "alpha": param["alpha"],
+                        "up": param["up"],
+                        "down": param["down"],
                         "device": self.device,
                         "dtype": self.dtype,
-                        "save_original_weight": save_original_weight
+                        "save_original_weight": save_original_weight,
                     }
                     if fused:
                         module.add_frozen_lora(**lora_args)
@@ -301,28 +303,31 @@ class SDXLImagePipeline(BasePipeline):
 
     @torch.no_grad()
     def __call__(
-            self,
-            prompt: str,
-            negative_prompt: str = "",
-            cfg_scale: float = 7.5,
-            clip_skip: int = 2,
-            input_image: Image.Image | None = None,
-            mask_image: Image.Image | None = None,
-            denoising_strength: float = 1.0,
-            height: int = 1024,
-            width: int = 1024,
-            num_inference_steps: int = 20,
-            tiled: bool = False,
-            tile_size: int = 64,
-            tile_stride: int = 32,
-            seed: int | None = None,
-            progress_bar_cmd: Callable = tqdm,
-            progress_bar_st: ModuleType | None = None,
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        cfg_scale: float = 7.5,
+        clip_skip: int = 2,
+        input_image: Image.Image | None = None,
+        mask_image: Image.Image | None = None,
+        denoising_strength: float = 1.0,
+        height: int = 1024,
+        width: int = 1024,
+        num_inference_steps: int = 20,
+        tiled: bool = False,
+        tile_size: int = 64,
+        tile_stride: int = 32,
+        seed: int | None = None,
+        progress_bar_cmd: Callable = tqdm,
+        progress_bar_st: ModuleType | None = None,
     ):
-        noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device,
-                                      dtype=self.dtype)
+        if input_image is not None:
+            height, width = input_image.size
+        noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, input_image, denoising_strength, num_inference_steps)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(
+            noise, input_image, denoising_strength, num_inference_steps
+        )
         mask, overlay_image = None, None
         if mask_image is not None:
             mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8)
@@ -330,32 +335,35 @@ class SDXLImagePipeline(BasePipeline):
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Encode prompts
-        self.load_models_to_device(['text_encoder', 'text_encoder_2'])
+        self.load_models_to_device(["text_encoder", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
         if negative_prompt != "":
             negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
         else:
-            # from automatic1111/stable-diffusion-webui            
-            negative_prompt_emb, negative_add_text_embeds = torch.zeros_like(positive_prompt_emb), torch.zeros_like(positive_add_text_embeds)
-        
+            # from automatic1111/stable-diffusion-webui
+            negative_prompt_emb, negative_add_text_embeds = (
+                torch.zeros_like(positive_prompt_emb),
+                torch.zeros_like(positive_add_text_embeds),
+            )
+
         # Prepare extra input
         add_time_id = self.prepare_add_time_id(latents)
 
         # Denoise
-        self.load_models_to_device(['unet'])
+        self.load_models_to_device(["unet"])
         for i, timestep in enumerate(progress_bar_cmd(timesteps)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
-                latents=latents, 
+                latents=latents,
                 timestep=timestep,
-                positive_prompt_emb=positive_prompt_emb, 
+                positive_prompt_emb=positive_prompt_emb,
                 negative_prompt_emb=negative_prompt_emb,
-                positive_add_text_embeds=positive_add_text_embeds, 
+                positive_add_text_embeds=positive_add_text_embeds,
                 negative_add_text_embeds=negative_add_text_embeds,
-                add_time_id=add_time_id, 
-                cfg_scale=cfg_scale, 
-                batch_cfg=self.batch_cfg
+                add_time_id=add_time_id,
+                cfg_scale=cfg_scale,
+                batch_cfg=self.batch_cfg,
             )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
@@ -365,14 +373,14 @@ class SDXLImagePipeline(BasePipeline):
         if mask_image is not None:
             latents = latents * mask + init_latents * (1 - mask)
         # Decode image
-        self.load_models_to_device(['vae_decoder'])
+        self.load_models_to_device(["vae_decoder"])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-        
+
         if mask_image is not None:
             image = image.convert("RGBA")
             image.alpha_composite(overlay_image)
-            image = image.convert("RGB")            
+            image = image.convert("RGB")
         # offload all models
         self.load_models_to_device([])
         return image
