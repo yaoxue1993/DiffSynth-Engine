@@ -414,7 +414,7 @@ class FluxImagePipeline(BasePipeline):
         progress_bar_st: ModuleType | None = None,
     ):
         if input_image is not None:
-            height, width = input_image.size
+            width, height = input_image.size
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )

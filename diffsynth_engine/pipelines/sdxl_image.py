@@ -322,7 +322,7 @@ class SDXLImagePipeline(BasePipeline):
         progress_bar_st: ModuleType | None = None,
     ):
         if input_image is not None:
-            height, width = input_image.size
+            width, height = input_image.size
         noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
