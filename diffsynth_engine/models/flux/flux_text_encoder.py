@@ -1,3 +1,4 @@
+import json
 import torch
 from typing import Dict
 
@@ -5,25 +6,29 @@ from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.models.components.t5 import T5EncoderModel
 from diffsynth_engine.models.base import StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.constants import FLUX_TEXT_ENCODER_CONFIG_FILE
 from diffsynth_engine.utils import logging
-from diffsynth_engine.conf.keymap import flux_civitai_clip_rename_dict, flux_civitai_clip_attn_rename_dict
+
 logger = logging.get_logger(__name__)
+
+with open(FLUX_TEXT_ENCODER_CONFIG_FILE, "r") as f:
+    config = json.load(f)
 
 
 class FluxTextEncoder1StateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["diffusers"]["rename_dict"]
+        attn_rename_dict = config["diffusers"]["attn_rename_dict"]
         state_dict_ = {}
-        for name in state_dict:
-            if name in flux_civitai_clip_rename_dict:
-                param = state_dict[name]
+        for name, param in state_dict.items():
+            if name in rename_dict:
                 if name == "text_model.embeddings.position_embedding.weight":
                     param = param.reshape((1, param.shape[0], param.shape[1]))
-                state_dict_[flux_civitai_clip_rename_dict[name]] = param
+                state_dict_[rename_dict[name]] = param
             elif name.startswith("text_model.encoder.layers."):
-                param = state_dict[name]
                 names = name.split(".")
                 layer_id, layer_type, tail = names[3], ".".join(names[4:-1]), names[-1]
-                name_ = ".".join(["encoders", layer_id, flux_civitai_clip_attn_rename_dict[layer_type], tail])
+                name_ = ".".join(["encoders", layer_id, attn_rename_dict[layer_type], tail])
                 state_dict_[name_] = param
         return state_dict_
 
@@ -39,7 +44,7 @@ class FluxTextEncoder1StateDictConverter(StateDictConverter):
 class FluxTextEncoder1(SDTextEncoder):
     converter = FluxTextEncoder1StateDictConverter()
 
-    def __init__(self, vocab_size=49408, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, vocab_size=49408, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
 
     def forward(self, input_ids, clip_skip=2):
@@ -48,14 +53,15 @@ class FluxTextEncoder1(SDTextEncoder):
         for encoder_id, encoder in enumerate(self.encoders):
             embeds = encoder(embeds, attn_mask=attn_mask)
             if encoder_id + clip_skip == len(self.encoders):
-                hidden_states = embeds # clip_skip has no effect on the output
+                hidden_states = embeds  # clip_skip has no effect on the output
         embeds = self.final_layer_norm(embeds)
         pooled_embeds = embeds[torch.arange(embeds.shape[0]), input_ids.to(dtype=torch.int).argmax(dim=-1)]
         return embeds, pooled_embeds
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype,
-                        vocab_size: int = 49408):
+    def from_state_dict(
+        cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, vocab_size: int = 49408
+    ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
         model.load_state_dict(state_dict)
@@ -63,7 +69,7 @@ class FluxTextEncoder1(SDTextEncoder):
 
 
 class FluxTextEncoder2(T5EncoderModel):
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__(
             embed_dim=4096,
             vocab_size=32128,
@@ -75,7 +81,7 @@ class FluxTextEncoder2(T5EncoderModel):
             dropout_rate=0.1,
             eps=1e-6,
             device=device,
-            dtype=dtype
+            dtype=dtype,
         )
 
     def forward(self, input_ids):

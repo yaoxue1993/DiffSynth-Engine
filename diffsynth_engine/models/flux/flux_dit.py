@@ -1,3 +1,4 @@
+import json
 import torch
 import torch.nn as nn
 from typing import Dict
@@ -8,9 +9,13 @@ from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 from diffsynth_engine.utils import logging
-from diffsynth_engine.conf.keymap import flux_civitai_dit_rename_dict, flux_civitai_dit_suffix_rename_dict
+
 logger = logging.get_logger(__name__)
+
+with open(FLUX_DIT_CONFIG_FILE, "r") as f:
+    config = json.load(f)
 
 
 class FluxDiTStateDictConverter(StateDictConverter):
@@ -18,49 +23,9 @@ class FluxDiTStateDictConverter(StateDictConverter):
         pass
 
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        global_rename_dict = {
-            "context_embedder": "context_embedder",
-            "x_embedder": "x_embedder",
-            "time_text_embed.timestep_embedder.linear_1": "time_embedder.timestep_embedder.0",
-            "time_text_embed.timestep_embedder.linear_2": "time_embedder.timestep_embedder.2",
-            "time_text_embed.guidance_embedder.linear_1": "guidance_embedder.timestep_embedder.0",
-            "time_text_embed.guidance_embedder.linear_2": "guidance_embedder.timestep_embedder.2",
-            "time_text_embed.text_embedder.linear_1": "pooled_text_embedder.0",
-            "time_text_embed.text_embedder.linear_2": "pooled_text_embedder.2",
-            "norm_out.linear": "final_norm_out.linear",
-            "proj_out": "final_proj_out",
-        }
-        rename_dict = {
-            "proj_out": "proj_out",
-            "norm1.linear": "norm1_a.linear",
-            "norm1_context.linear": "norm1_b.linear",
-            "attn.to_q": "attn.a_to_q",
-            "attn.to_k": "attn.a_to_k",
-            "attn.to_v": "attn.a_to_v",
-            "attn.to_out.0": "attn.a_to_out",
-            "attn.add_q_proj": "attn.b_to_q",
-            "attn.add_k_proj": "attn.b_to_k",
-            "attn.add_v_proj": "attn.b_to_v",
-            "attn.to_add_out": "attn.b_to_out",
-            "ff.net.0.proj": "ff_a.0",
-            "ff.net.2": "ff_a.2",
-            "ff_context.net.0.proj": "ff_b.0",
-            "ff_context.net.2": "ff_b.2",
-            "attn.norm_q": "attn.norm_q_a",
-            "attn.norm_k": "attn.norm_k_a",
-            "attn.norm_added_q": "attn.norm_q_b",
-            "attn.norm_added_k": "attn.norm_k_b",
-        }
-        rename_dict_single = {
-            "attn.to_q": "a_to_q",
-            "attn.to_k": "a_to_k",
-            "attn.to_v": "a_to_v",
-            "attn.norm_q": "norm_q_a",
-            "attn.norm_k": "norm_k_a",
-            "norm.linear": "norm.linear",
-            "proj_mlp": "proj_in_besides_attn",
-            "proj_out": "proj_out",
-        }
+        global_rename_dict = config["diffusers"]["global_rename_dict"]
+        rename_dict = config["diffusers"]["rename_dict"]
+        rename_dict_single = config["diffusers"]["rename_dict_single"]
         state_dict_ = {}
         for name, param in state_dict.items():
             if name.endswith(".weight") or name.endswith(".bias"):
@@ -116,25 +81,26 @@ class FluxDiTStateDictConverter(StateDictConverter):
         return state_dict_
 
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["civitai"]["rename_dict"]
+        suffix_rename_dict = config["civitai"]["suffix_rename_dict"]
         state_dict_ = {}
         for name, param in state_dict.items():
             names = name.split(".")
-            if name in flux_civitai_dit_rename_dict:
-                rename = flux_civitai_dit_rename_dict[name]
+            if name in rename_dict:
                 if name.startswith("final_layer.adaLN_modulation.1."):
                     param = torch.concat([param[3072:], param[:3072]], dim=0)
-                state_dict_[rename] = param
+                state_dict_[rename_dict[name]] = param
             elif names[0] == "double_blocks":
-                rename = f"blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
-                state_dict_[rename] = param
+                name_ = f"blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
+                state_dict_[name_] = param
             elif names[0] == "single_blocks":
-                if ".".join(names[2:]) in flux_civitai_dit_suffix_rename_dict:
-                    rename = f"single_blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
-                    state_dict_[rename] = param
+                if ".".join(names[2:]) in suffix_rename_dict:
+                    name_ = f"single_blocks.{names[1]}." + suffix_rename_dict[".".join(names[2:])]
+                    state_dict_[name_] = param
             else:
                 pass
         if "guidance_embedder.timestep_embedder.0.weight" not in state_dict_:
-            return state_dict_, {"disable_guidance_embedder": True}
+            return state_dict_, {"disable_guidance_embedder": True} # TODO: remove
         else:
             return state_dict_
 

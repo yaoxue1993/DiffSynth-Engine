@@ -1,11 +1,10 @@
 import os
 import torch
 import torch.nn as nn
-from dataclasses import dataclass
 from typing import Dict, Union
+from safetensors.torch import load_file
 
 from diffsynth_engine.models.utils import no_init_weights
-from safetensors.torch import load_file
 
 
 class LoRAStateDictConverter:
@@ -14,6 +13,8 @@ class LoRAStateDictConverter:
 
 
 StateDictType = Dict[str, torch.Tensor]
+
+
 class StateDictConverter:
     def convert(self, state_dict: StateDictType) -> StateDictType:
         return state_dict
@@ -22,16 +23,12 @@ class StateDictConverter:
 class PreTrainedModel(nn.Module):
     converter = StateDictConverter()
 
-    def load_state_dict(self,
-                        state_dict: Dict[str, torch.Tensor],
-                        strict: bool = True,
-                        assign: bool = False
-                        ):
+    def load_state_dict(self, state_dict: Dict[str, torch.Tensor], strict: bool = True, assign: bool = False):
         state_dict = self.converter.convert(state_dict)
         super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device:str, dtype: torch.dtype, **kwargs):
+    def from_pretrained(cls, pretrained_model_path: Union[str, os.PathLike], device: str, dtype: torch.dtype, **kwargs):
         state_dict = load_file(pretrained_model_path, device=device)
         return cls.from_state_dict(state_dict, device=device, dtype=dtype, **kwargs)
 
@@ -41,3 +38,17 @@ class PreTrainedModel(nn.Module):
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
         model.load_state_dict(state_dict)
         return model
+
+
+def split_suffix(name: str):
+    suffix_list = [
+        ".lora_up.weight",
+        ".lora_down.weight",
+        ".weight",
+        ".bias",
+        ".alpha",
+    ]
+    for suffix in suffix_list:
+        if name.endswith(suffix):
+            return name.replace(suffix, ""), suffix
+    return name, ""

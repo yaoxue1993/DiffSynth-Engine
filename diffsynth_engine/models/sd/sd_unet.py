@@ -1,9 +1,9 @@
+import json
 import torch
 import torch.nn as nn
 from typing import Dict
 
-from diffsynth_engine.conf.keymap import split_key, sd_civitai_unet_keymap
-from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.models.basic.unet_helper import (
@@ -12,35 +12,91 @@ from diffsynth_engine.models.basic.unet_helper import (
     PushBlock,
     DownSampler,
     PopBlock,
-    UpSampler
+    UpSampler,
 )
+from diffsynth_engine.utils.constants import SD_UNET_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
+
+with open(SD_UNET_CONFIG_FILE) as f:
+    config = json.load(f)
 
 
 class SDUNetStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # architecture
         block_types = [
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
-            'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
-            'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'PushBlock', 'ResnetBlock', 'AttentionBlock', 'PushBlock', 'DownSampler',
-            'PushBlock',
-            'ResnetBlock', 'PushBlock', 'ResnetBlock', 'PushBlock',
-            'ResnetBlock', 'AttentionBlock', 'ResnetBlock',
-            'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'PopBlock', 'ResnetBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
-            'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
-            'ResnetBlock', 'AttentionBlock', 'UpSampler',
-            'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock', 'ResnetBlock', 'AttentionBlock', 'PopBlock',
-            'ResnetBlock', 'AttentionBlock'
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PushBlock",
+            "DownSampler",
+            "PushBlock",
+            "ResnetBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "PushBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "UpSampler",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
+            "PopBlock",
+            "ResnetBlock",
+            "AttentionBlock",
         ]
 
-        # Rename each parameter
+        # rename each parameter
         name_list = sorted([name for name in state_dict])
         rename_dict = {}
         block_id = {"ResnetBlock": -1, "AttentionBlock": -1, "DownSampler": -1, "UpSampler": -1}
@@ -58,8 +114,12 @@ class SDUNetStateDictConverter(StateDictConverter):
             elif names[0] in ["down_blocks", "mid_block", "up_blocks"]:
                 if names[0] == "mid_block":
                     names.insert(1, "0")
-                block_type = {"resnets": "ResnetBlock", "attentions": "AttentionBlock", "downsamplers": "DownSampler",
-                              "upsamplers": "UpSampler"}[names[2]]
+                block_type = {
+                    "resnets": "ResnetBlock",
+                    "attentions": "AttentionBlock",
+                    "downsamplers": "DownSampler",
+                    "upsamplers": "UpSampler",
+                }[names[2]]
                 block_type_with_id = ".".join(names[:4])
                 if block_type_with_id != last_block_type_with_id[block_type]:
                     block_id[block_type] += 1
@@ -70,16 +130,16 @@ class SDUNetStateDictConverter(StateDictConverter):
                 names = ["blocks", str(block_id[block_type])] + names[4:]
                 if "ff" in names:
                     ff_index = names.index("ff")
-                    component = ".".join(names[ff_index:ff_index + 3])
+                    component = ".".join(names[ff_index : ff_index + 3])
                     component = {"ff.net.0": "act_fn", "ff.net.2": "ff"}[component]
-                    names = names[:ff_index] + [component] + names[ff_index + 3:]
+                    names = names[:ff_index] + [component] + names[ff_index + 3 :]
                 if "to_out" in names:
                     names.pop(names.index("to_out") + 1)
             else:
                 raise ValueError(f"Unknown parameters: {name}")
             rename_dict[name] = ".".join(names)
 
-        # Convert state_dict
+        # convert state_dict
         state_dict_ = {}
         for name, param in state_dict.items():
             if ".proj_in." in name or ".proj_out." in name:
@@ -88,14 +148,14 @@ class SDUNetStateDictConverter(StateDictConverter):
         return state_dict_
 
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["civitai"]["rename_dict"]
         state_dict_ = {}
-        for key in state_dict:
-            name, suffix = split_key(key)
-            if name in sd_civitai_unet_keymap:
-                param = state_dict[key]
+        for name, param in state_dict.items():
+            name, suffix = split_suffix(name)
+            if name in rename_dict:
                 if ".proj_in" in name or ".proj_out" in name:
                     param = param.squeeze()
-                new_key = sd_civitai_unet_keymap[name] + suffix
+                new_key = rename_dict[name] + suffix
                 state_dict_[new_key] = param
         return state_dict_
 
@@ -114,89 +174,91 @@ class SDUNetStateDictConverter(StateDictConverter):
 class SDUNet(PreTrainedModel):
     converter = SDUNetStateDictConverter()
 
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.time_embedding = TimestepEmbeddings(dim_in=320, dim_out=1280, device=device, dtype=dtype)
         self.conv_in = nn.Conv2d(4, 320, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.blocks = nn.ModuleList([
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(320, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(640, device=device, dtype=dtype),
-            PushBlock(),
-            # CrossAttnDownBlock2D
-            ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PushBlock(),
-            DownSampler(1280, device=device, dtype=dtype),
-            PushBlock(),
-            # DownBlock2D
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            PushBlock(),
-            # UNetMidBlock2DCrossAttn
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
-            # UpBlock2D
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
-            UpSampler(1280, device=device, dtype=dtype),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(1920, 1280, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(1280, device=device, dtype=dtype),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(1920, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(1280, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(960, 640, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(640, device=device, dtype=dtype),
-            # CrossAttnUpBlock2D
-            PopBlock(),
-            ResnetBlock(960, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
-            PopBlock(),
-            ResnetBlock(640, 320, 1280, device=device, dtype=dtype),
-            AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                # CrossAttnDownBlock2D
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(320, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(320, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(320, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(640, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(640, device=device, dtype=dtype),
+                PushBlock(),
+                # CrossAttnDownBlock2D
+                ResnetBlock(640, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PushBlock(),
+                DownSampler(1280, device=device, dtype=dtype),
+                PushBlock(),
+                # DownBlock2D
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                PushBlock(),
+                # UNetMidBlock2DCrossAttn
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(1280, 1280, 1280, device=device, dtype=dtype),
+                # UpBlock2D
+                PopBlock(),
+                ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+                UpSampler(1280, device=device, dtype=dtype),
+                # CrossAttnUpBlock2D
+                PopBlock(),
+                ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(2560, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(1920, 1280, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 160, 1280, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                UpSampler(1280, device=device, dtype=dtype),
+                # CrossAttnUpBlock2D
+                PopBlock(),
+                ResnetBlock(1920, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(1280, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(960, 640, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 80, 640, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                UpSampler(640, device=device, dtype=dtype),
+                # CrossAttnUpBlock2D
+                PopBlock(),
+                ResnetBlock(960, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(640, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
+                PopBlock(),
+                ResnetBlock(640, 320, 1280, device=device, dtype=dtype),
+                AttentionBlock(8, 40, 320, 1, 768, eps=1e-6, device=device, dtype=dtype),
+            ]
+        )
 
         self.conv_norm_out = nn.GroupNorm(num_channels=320, num_groups=32, eps=1e-5, device=device, dtype=dtype)
         self.conv_act = nn.SiLU()

@@ -1,32 +1,24 @@
+import json
 import torch
 import torch.nn as nn
 from typing import Dict
 
 from diffsynth_engine.models.components.clip import CLIPEncoderLayer
-from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
+from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter, split_suffix
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.constants import SDXL_TEXT_ENCODER_CONFIG_FILE
 from diffsynth_engine.utils import logging
-from diffsynth_engine.conf.keymap import sdxl_civitai_te1_keymap, sdxl_civitai_te2_keymap, split_key
 
 logger = logging.get_logger(__name__)
+
+with open(SDXL_TEXT_ENCODER_CONFIG_FILE, "r") as f:
+    config = json.load(f)
 
 
 class SDXLTextEncoderStateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        rename_dict = {
-            "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
-            "text_model.embeddings.position_embedding.weight": "position_embeds"
-        }
-        attn_rename_dict = { 
-            "self_attn.q_proj": "attn.to_q",
-            "self_attn.k_proj": "attn.to_k",
-            "self_attn.v_proj": "attn.to_v",
-            "self_attn.out_proj": "attn.to_out",
-            "layer_norm1": "layer_norm1",
-            "layer_norm2": "layer_norm2",
-            "mlp.fc1": "fc1",
-            "mlp.fc2": "fc2",
-        }
+        rename_dict = config["diffusers"]["te1_rename_dict"]
+        attn_rename_dict = config["diffusers"]["te1_attn_rename_dict"]
         state_dict_ = {}
         for name in state_dict:
             if name in rename_dict:
@@ -46,19 +38,20 @@ class SDXLTextEncoderStateDictConverter(StateDictConverter):
         return state_dict_
 
     def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["civitai"]["te1_rename_dict"]
         state_dict_ = {}
-        for key, param in state_dict.items():
-            if not key.startswith("conditioner.embedders.0"):
+        for name, param in state_dict.items():
+            if not name.startswith("conditioner.embedders.0"):
                 continue
-            if key == "conditioner.embedders.0.transformer.text_model.embeddings.position_embedding.weight":
+            if name == "conditioner.embedders.0.transformer.text_model.embeddings.position_embedding.weight":
                 param = param.reshape((1, param.shape[0], param.shape[1]))
                 name = "conditioner.embedders.0.transformer.text_model.embeddings.position_embedding"
                 suffix = ""
-            else:            
-                name, suffix = split_key(key)
-            if name in sdxl_civitai_te1_keymap:
-                new_key = sdxl_civitai_te1_keymap[name] + suffix
-                state_dict_[new_key] = param
+            else:
+                name, suffix = split_suffix(name)
+            if name in rename_dict:
+                name_ = rename_dict[name] + suffix
+                state_dict_[name_] = param
         return state_dict_
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -75,23 +68,8 @@ class SDXLTextEncoderStateDictConverter(StateDictConverter):
 
 class SDXLTextEncoder2StateDictConverter(StateDictConverter):
     def _from_diffusers(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        rename_dict = {
-            "text_model.embeddings.token_embedding.weight": "token_embedding.weight",
-            "text_model.embeddings.position_embedding.weight": "position_embeds",
-            "text_model.final_layer_norm.weight": "final_layer_norm.weight",
-            "text_model.final_layer_norm.bias": "final_layer_norm.bias",
-            "text_projection.weight": "text_projection.weight"
-        }
-        attn_rename_dict = {
-            "self_attn.q_proj": "attn.to_q",
-            "self_attn.k_proj": "attn.to_k",
-            "self_attn.v_proj": "attn.to_v",
-            "self_attn.out_proj": "attn.to_out",
-            "layer_norm1": "layer_norm1",
-            "layer_norm2": "layer_norm2",
-            "mlp.fc1": "fc1",
-            "mlp.fc2": "fc2",
-        }
+        rename_dict = config["diffusers"]["te2_rename_dict"]
+        attn_rename_dict = config["diffusers"]["te2_attn_rename_dict"]
         state_dict_ = {}
         for name in state_dict:
             if name in rename_dict:
@@ -107,34 +85,38 @@ class SDXLTextEncoder2StateDictConverter(StateDictConverter):
                 state_dict_[name_] = param
         return state_dict_
 
-    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:        
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = config["civitai"]["te2_rename_dict"]
         state_dict_ = {}
-        for key, param in state_dict.items():
-            if not key.startswith("conditioner.embedders.1"):
+        for name, param in state_dict.items():
+            if not name.startswith("conditioner.embedders.1"):
                 continue
-            if "in_proj_weight" in key or "in_proj_bias" in key:
-                name = ".".join(key.split(".")[:-1]) + ".in_proj"
-                suffix = "." + key.split(".")[-1].strip("in_proj")                
-            elif key == "conditioner.embedders.1.model.text_projection":
-                name = "conditioner.embedders.1.model.text_projection"                
-                suffix = ".weight"                                
-                param = param.T                
-            elif key == "conditioner.embedders.1.model.positional_embedding":
+            if name.endswith(".in_proj_weight"):
+                name = name.replace(".in_proj_weight", ".in_proj")
+                suffix = ".weight"
+            elif name.endswith(".in_proj_bias"):
+                name = name.replace(".in_proj_bias", ".in_proj")
+                suffix = ".bias"
+            elif name == "conditioner.embedders.1.model.text_projection":
+                name = "conditioner.embedders.1.model.text_projection"
+                suffix = ".weight"
+                param = param.T
+            elif name == "conditioner.embedders.1.model.positional_embedding":
                 name = "conditioner.embedders.1.model.positional_embedding"
-                suffix = ""              
+                suffix = ""
                 param = param.reshape((1, param.shape[0], param.shape[1]))
             else:
-                name, suffix = split_key(key)                
+                name, suffix = split_suffix(name)
 
-            if name in sdxl_civitai_te2_keymap:
-                if isinstance(sdxl_civitai_te2_keymap[name], str):
-                    new_key = sdxl_civitai_te2_keymap[name] + suffix
-                    state_dict_[new_key] = param
+            if name in rename_dict:
+                if isinstance(rename_dict[name], str):
+                    name_ = rename_dict[name] + suffix
+                    state_dict_[name_] = param
                 else:
                     length = param.shape[0] // 3
-                    for i, rename in enumerate(sdxl_civitai_te2_keymap[name]):
-                        new_key = rename + suffix
-                        state_dict_[new_key] = param[i * length: i * length + length]
+                    for i, rename in enumerate(rename_dict[name]):
+                        name_ = rename + suffix
+                        state_dict_[name_] = param[i * length : i * length + length]
         return state_dict_
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -152,8 +134,16 @@ class SDXLTextEncoder2StateDictConverter(StateDictConverter):
 class SDXLTextEncoder(PreTrainedModel):
     converter = SDXLTextEncoderStateDictConverter()
 
-    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=11,
-                 encoder_intermediate_size=3072, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        embed_dim=768,
+        vocab_size=49408,
+        max_position_embeddings=77,
+        num_encoder_layers=11,
+        encoder_intermediate_size=3072,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
 
         # token_embedding
@@ -161,12 +151,16 @@ class SDXLTextEncoder(PreTrainedModel):
 
         # position_embeds (This is a fixed tensor)
         self.position_embeds = nn.Parameter(
-            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
+            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype)
+        )
 
         # encoders
         self.encoders = nn.ModuleList(
-            [CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype)
-             for _ in range(num_encoder_layers)])
+            [
+                CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype)
+                for _ in range(num_encoder_layers)
+            ]
+        )
 
         # attn_mask
         self.attn_mask = self.attention_mask(max_position_embeddings)
@@ -181,7 +175,9 @@ class SDXLTextEncoder(PreTrainedModel):
         return mask
 
     def forward(self, input_ids, clip_skip=2):
-        clip_skip = max(clip_skip - 1, 1)  # Because we did not load the last layer of the encoder, the clip_skip needs to be decreased by 1.
+        clip_skip = max(
+            clip_skip - 1, 1
+        )  # Because we did not load the last layer of the encoder, the clip_skip needs to be decreased by 1.
         embeds = self.token_embedding(input_ids) + self.position_embeds
         attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
         for encoder_id, encoder in enumerate(self.encoders):
@@ -192,21 +188,27 @@ class SDXLTextEncoder(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-            cls,
-            state_dict: Dict[str, torch.Tensor],
-            device: str,
-            dtype: torch.dtype,
-            embed_dim: int = 768,
-            vocab_size: int = 49408,
-            max_position_embeddings: int = 77,
-            num_encoder_layers: int = 11,
-            encoder_intermediate_size: int = 3072,
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        embed_dim: int = 768,
+        vocab_size: int = 49408,
+        max_position_embeddings: int = 77,
+        num_encoder_layers: int = 11,
+        encoder_intermediate_size: int = 3072,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim,
-                                             vocab_size=vocab_size, max_position_embeddings=max_position_embeddings,
-                                             num_encoder_layers=num_encoder_layers,
-                                             encoder_intermediate_size=encoder_intermediate_size)
+            model = torch.nn.utils.skip_init(
+                cls,
+                device=device,
+                dtype=dtype,
+                embed_dim=embed_dim,
+                vocab_size=vocab_size,
+                max_position_embeddings=max_position_embeddings,
+                num_encoder_layers=num_encoder_layers,
+                encoder_intermediate_size=encoder_intermediate_size,
+            )
         model.load_state_dict(state_dict)
         return model
 
@@ -214,8 +216,16 @@ class SDXLTextEncoder(PreTrainedModel):
 class SDXLTextEncoder2(PreTrainedModel):
     converter = SDXLTextEncoder2StateDictConverter()
 
-    def __init__(self, embed_dim=1280, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=32,
-                 encoder_intermediate_size=5120, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        embed_dim=1280,
+        vocab_size=49408,
+        max_position_embeddings=77,
+        num_encoder_layers=32,
+        encoder_intermediate_size=5120,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
 
         # token_embedding
@@ -223,12 +233,24 @@ class SDXLTextEncoder2(PreTrainedModel):
 
         # position_embeds (This is a fixed tensor)
         self.position_embeds = nn.Parameter(
-            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
+            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype)
+        )
 
         # encoders
-        self.encoders = nn.ModuleList([CLIPEncoderLayer(embed_dim, encoder_intermediate_size, num_heads=20, head_dim=64,
-                                                        use_quick_gelu=False, device=device, dtype=dtype)
-                                       for _ in range(num_encoder_layers)])
+        self.encoders = nn.ModuleList(
+            [
+                CLIPEncoderLayer(
+                    embed_dim,
+                    encoder_intermediate_size,
+                    num_heads=20,
+                    head_dim=64,
+                    use_quick_gelu=False,
+                    device=device,
+                    dtype=dtype,
+                )
+                for _ in range(num_encoder_layers)
+            ]
+        )
 
         # attn_mask
         self.attn_mask = self.attention_mask(max_position_embeddings)
@@ -260,20 +282,26 @@ class SDXLTextEncoder2(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-            cls,
-            state_dict: Dict[str, torch.Tensor],
-            device: str,
-            dtype: torch.dtype,
-            embed_dim: int = 1280,
-            vocab_size: int = 49408,
-            max_position_embeddings: int = 77,
-            num_encoder_layers: int = 32,
-            encoder_intermediate_size: int = 5120,
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        embed_dim: int = 1280,
+        vocab_size: int = 49408,
+        max_position_embeddings: int = 77,
+        num_encoder_layers: int = 32,
+        encoder_intermediate_size: int = 5120,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim,
-                                             vocab_size=vocab_size, max_position_embeddings=max_position_embeddings,
-                                             num_encoder_layers=num_encoder_layers,
-                                             encoder_intermediate_size=encoder_intermediate_size)
+            model = torch.nn.utils.skip_init(
+                cls,
+                device=device,
+                dtype=dtype,
+                embed_dim=embed_dim,
+                vocab_size=vocab_size,
+                max_position_embeddings=max_position_embeddings,
+                num_encoder_layers=num_encoder_layers,
+                encoder_intermediate_size=encoder_intermediate_size,
+            )
         model.load_state_dict(state_dict)
         return model

@@ -1,26 +1,28 @@
 import re
 import os
+import json
 import torch
-import logging
 from typing import Callable, Dict, Optional, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.conf.keymap import split_key, sd_civitai_unet_keymap
+from diffsynth_engine.models.base import LoRAStateDictConverter, split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
-from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
-from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
+from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SD_UNET_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
+
+with open(SD_UNET_CONFIG_FILE, "r") as f:
+    config = json.load(f)
 
 re_compiled = {}
 re_digits = re.compile(r"\d+")
@@ -79,7 +81,7 @@ def convert_diffusers_name_to_compvis(key):
         return f"model.diffusion_model.input_blocks.{3 + m[0] * 3}.0.op"
 
     if match(m, r"lora_unet_up_blocks_(\d+)_upsamplers_0_conv"):
-        return f"model.diffusion_model.output_blocks.{2 + m[0] * 3}.{2 if m[0]>0 else 1}.conv"
+        return f"model.diffusion_model.output_blocks.{2 + m[0] * 3}.{2 if m[0] > 0 else 1}.conv"
     return key
 
 
@@ -96,14 +98,15 @@ class SDLoRAConverter(LoRAStateDictConverter):
         return key
 
     def _replace_kohya_unet_key(self, key):
+        rename_dict = config["civitai"]["rename_dict"]
         key = convert_diffusers_name_to_compvis(key)
         key = re.sub(r"(\d+)_", r"\1.", key)
         key = re.sub(r"_(\d+)", r".\1", key)
         key = key.replace("ff_net", "ff.net")
-        name, suffix = split_key(key)
-        if name not in sd_civitai_unet_keymap:
+        name, suffix = split_suffix(key)
+        if name not in rename_dict:
             raise ValueError(f"Unsupported key: {key}, name: {name}, suffix: {suffix}")
-        key = sd_civitai_unet_keymap[name] + suffix
+        key = rename_dict[name] + suffix
         return key
 
     def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
