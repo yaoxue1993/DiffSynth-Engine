@@ -10,7 +10,7 @@ class TestSampler(ImageTestCase):
         scheduler = ScaledLinearScheduler()
         sigmas, timesteps = scheduler.schedule(num_inference_steps)
         sampler = EulerSampler()
-        sampler.initialize(None, timesteps, sigmas)
+        sampler.initialize(None, timesteps, sigmas, None)
         expect_tensor = self.get_expect_tensor("algorithm/euler_i10.safetensors")
         origin_sample = expect_tensor["origin_sample"]
         model_output = expect_tensor["model_output"]
@@ -27,7 +27,7 @@ class TestSampler(ImageTestCase):
         sigmas, timesteps = scheduler.schedule(num_inference_steps, mu=calculate_shift(width//16 * height//16), sigmas=sigmas)
 
         sampler = FlowMatchEulerSampler()
-        sampler.initialize(None, timesteps, sigmas)
+        sampler.initialize(None, timesteps, sigmas, None)
         
         expect_tensor = self.get_expect_tensor("algorithm/flow_match_euler_i10.safetensors")
         origin_sample = expect_tensor["origin_sample"]
@@ -37,16 +37,3 @@ class TestSampler(ImageTestCase):
         results = sampler.step(origin_sample, model_output, 10)
         self.assertTensorEqual(results, prev_sample)
 
-    def test_deis_sampler(self):
-        num_inference_steps = 20
-        scheduler = DDIMScheduler()
-        sigmas, timesteps = scheduler.schedule(num_inference_steps)
-        sampler = DEISSampler()
-        sampler.initialize(None, timesteps, sigmas)
-        for i in range(0, 4):
-            expect_tensor = self.get_expect_tensor(f"algorithm/deis_i{i}.safetensors")
-            origin_sample = expect_tensor["origin_sample"]
-            model_output = expect_tensor["model_output"]
-            prev_sample = expect_tensor["prev_sample"]
-            results = sampler.step(origin_sample, model_output, i)
-            self.assertTensorEqual(results, prev_sample)

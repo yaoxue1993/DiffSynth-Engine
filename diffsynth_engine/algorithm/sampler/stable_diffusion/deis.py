@@ -6,39 +6,35 @@ class DEISSampler(EpsilonSampler):
     '''
     According to the implementation of the webui forge, deis_mode only supports tab and rhoab.
     '''
-    def __init__(self, max_order=3):
-        self.max_order = 3
 
-    def initialize(self, latents, timesteps, sigmas):
+    def initialize(self, init_latents, timesteps, sigmas, mask):
+        super().initialize(init_latents, timesteps, sigmas, mask)
+        self.max_order = 3
         self.sigmas = sigmas
         self.timesteps = timesteps
         self.lower_order_nums = 0
         self.coeff_list = get_deis_coeff_list(self.sigmas, self.max_order)
         self.coeff_buffer = []
 
-    def _sigma_to_t(self, sigma):
-        return sigma.log().neg()
-
     def step(self, latents, model_outputs, i):
         s, s_next = self.sigmas[i], self.sigmas[i + 1]
-        x = self._scaling(latents, s)
-        denoised = self._to_denoised(s, model_outputs, x)
+        denoised = latents - model_outputs * s
 
-        d = (x - denoised) / s
+        d = (latents - denoised) / s
         order = min(self.max_order, i+1)
         if self.sigmas[i+1] <= 0:
             order = 1
         if order == 1:
-            x_next = x + (s_next - s) * d
+            x_next = latents + (s_next - s) * d
         elif order == 2:
             coeff, coeff_prev1 = self.coeff_list[i]
-            x_next = x + coeff * d + coeff_prev1 * self.coeff_buffer[-1]
+            x_next = latents + coeff * d + coeff_prev1 * self.coeff_buffer[-1]
         elif order == 3:
             coeff, coeff_prev1, coeff_prev2 = self.coeff_list[i]
-            x_next = x + coeff * d + coeff_prev1 * self.coeff_buffer[-1] + coeff_prev2 * self.coeff_buffer[-2]
+            x_next = latents + coeff * d + coeff_prev1 * self.coeff_buffer[-1] + coeff_prev2 * self.coeff_buffer[-2]
         elif order == 4:
             coeff, coeff_prev1, coeff_prev2, coeff_prev3 = self.coeff_list[i]
-            x_next = x + coeff * d + coeff_prev1 * self.coeff_buffer[-1] + coeff_prev2 * self.coeff_buffer[-2] + coeff_prev3 * self.coeff_buffer[-3]
+            x_next = latents + coeff * d + coeff_prev1 * self.coeff_buffer[-1] + coeff_prev2 * self.coeff_buffer[-2] + coeff_prev3 * self.coeff_buffer[-3]
 
         if len(self.coeff_buffer) == self.max_order - 1:
             for k in range(self.max_order - 2):
@@ -46,7 +42,7 @@ class DEISSampler(EpsilonSampler):
             self.coeff_buffer[-1] = d
         else:
             self.coeff_buffer.append(d)
-        return self._unscaling(x_next, s_next)
+        return x_next
 
 
 #Taken from: https://github.com/zju-pi/diff-sampler/blob/main/gits-main/solver_utils.py

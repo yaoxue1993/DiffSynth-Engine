@@ -6,6 +6,8 @@ from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zer
 
 class RecifitedFlowScheduler(BaseScheduler):
     def __init__(self, shift=1.0, num_train_timesteps=1000, use_dynamic_shifting=False):
+        self.device = "cpu"
+        self.pseudo_timestep_range = 10000
         self.num_train_timesteps = num_train_timesteps
         self.shift = shift
         self.sigma_min = 1 / num_train_timesteps
