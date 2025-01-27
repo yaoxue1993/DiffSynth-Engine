@@ -17,7 +17,7 @@ class RecifitedFlowDDIMScheduler(RecifitedFlowScheduler):
         for i in range(1, len(inner_sigmas), ss):
             sigmas.append(float(inner_sigmas[i]))
         sigmas = sigmas[::-1] 
-        sigmas = torch.FloatTensor(sigmas).to(self.device)        
+        sigmas = torch.FloatTensor(sigmas)   
         
         timesteps = self._sigma_to_t(sigmas)
         sigmas = append_zero(sigmas)

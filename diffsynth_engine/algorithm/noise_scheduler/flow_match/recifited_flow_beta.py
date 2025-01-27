@@ -22,7 +22,7 @@ class RecifitedFlowBetaScheduler(RecifitedFlowScheduler):
         timesteps = 1 - np.linspace(0, 1, num_inference_steps)
         timesteps = [stats.beta.ppf(x, self.alpha, self.beta) for x in timesteps] 
         sigmas = [sigma_min + (x * (sigma_max-sigma_min)) for x in timesteps]
-        sigmas = torch.FloatTensor(sigmas).to(self.device)
+        sigmas = torch.FloatTensor(sigmas)
         timesteps = self._sigma_to_t(sigmas)        
         sigmas = append_zero(sigmas)
         return sigmas, timesteps
