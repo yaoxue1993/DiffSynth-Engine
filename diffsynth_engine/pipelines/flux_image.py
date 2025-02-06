@@ -5,12 +5,18 @@ import math
 from typing import Callable, Dict, List, Tuple
 from types import ModuleType
 from safetensors.torch import load_file
-from einops import rearrange
 from tqdm import tqdm
 from PIL import Image
 
-from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2, FluxVAEDecoder, FluxVAEEncoder, FluxDiT
-from diffsynth_engine.models.basic.tiler import FastTileWorker
+from diffsynth_engine.models.flux import (
+    FluxTextEncoder1,
+    FluxTextEncoder2,
+    FluxVAEDecoder,
+    FluxVAEEncoder,
+    FluxDiT,
+    flux_dit_config,
+    flux_text_encoder_config,
+)
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
 from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.pipelines import BasePipeline
@@ -19,18 +25,17 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
-from diffsynth_engine.conf.keymap import (
-    flux_civitai_dit_rename_dict,
-    flux_civitai_dit_suffix_rename_dict,
-    flux_civitai_clip_rename_dict,
-    flux_civitai_clip_attn_rename_dict,
-)
 
 logger = logging.get_logger(__name__)
 
 
 class FluxLoRAConverter(LoRAStateDictConverter):
     def _from_kohya(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, torch.Tensor]]:
+        dit_rename_dict = flux_dit_config["civitai"]["rename_dict"]
+        dit_suffix_rename_dict = flux_dit_config["civitai"]["suffix_rename_dict"]
+        clip_rename_dict = flux_text_encoder_config["diffusers"]["rename_dict"]
+        clip_attn_rename_dict = flux_text_encoder_config["diffusers"]["attn_rename_dict"]
+
         dit_dict = {}
         te_dict = {}
         for key, param in lora_state_dict.items():
@@ -47,15 +52,15 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 key = key.replace("attn_proj", "attn.proj")
                 key = key.replace(".alpha", ".weight")
                 names = key.split(".")
-                if key in flux_civitai_dit_rename_dict:
-                    rename = flux_civitai_dit_rename_dict[key]
+                if key in dit_rename_dict:
+                    rename = dit_rename_dict[key]
                     if key.startswith("final_layer.adaLN_modulation.1."):
                         param = torch.concat([param[3072:], param[:3072]], dim=0)
                 elif names[0] == "double_blocks":
-                    rename = f"blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
+                    rename = f"blocks.{names[1]}." + dit_suffix_rename_dict[".".join(names[2:])]
                 elif names[0] == "single_blocks":
-                    if ".".join(names[2:]) in flux_civitai_dit_suffix_rename_dict:
-                        rename = f"single_blocks.{names[1]}." + flux_civitai_dit_suffix_rename_dict[".".join(names[2:])]
+                    if ".".join(names[2:]) in dit_suffix_rename_dict:
+                        rename = f"single_blocks.{names[1]}." + dit_suffix_rename_dict[".".join(names[2:])]
                     else:
                         raise ValueError(f"Unsupported key: {key}")
                 lora_args = {}
@@ -70,14 +75,14 @@ class FluxLoRAConverter(LoRAStateDictConverter):
                 name = name.replace("text_model_encoder_layers", "text_model.encoder.layers")
                 name = name.replace(".alpha", ".weight")
                 rename = ""
-                if name in flux_civitai_clip_rename_dict:
+                if name in clip_rename_dict:
                     if name == "text_model.embeddings.position_embedding.weight":
                         param = param.reshape((1, param.shape[0], param.shape[1]))
-                    rename = flux_civitai_clip_rename_dict[name]
+                    rename = clip_rename_dict[name]
                 elif name.startswith("text_model.encoder.layers."):
                     names = name.split(".")
                     layer_id, layer_type, tail = names[3], ".".join(names[4:-1]), names[-1]
-                    rename = ".".join(["encoders", layer_id, flux_civitai_clip_attn_rename_dict[layer_type], tail])
+                    rename = ".".join(["encoders", layer_id, clip_attn_rename_dict[layer_type], tail])
                 else:
                     raise ValueError(f"Unsupported key: {key}")
                 lora_args = {}

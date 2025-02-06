@@ -1,6 +1,5 @@
 import re
 import os
-import json
 import torch
 from typing import Callable, Dict, Optional, List, Tuple
 from types import ModuleType
@@ -10,19 +9,16 @@ from PIL import Image
 
 from diffsynth_engine.models.base import LoRAStateDictConverter, split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
-from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet
+from diffsynth_engine.models.sd import SDTextEncoder, SDVAEDecoder, SDVAEEncoder, SDUNet, sd_unet_config
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler
 from diffsynth_engine.algorithm.sampler import EulerSampler
 from diffsynth_engine.utils.prompt import tokenize_long_prompt
-from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SD_UNET_CONFIG_FILE
+from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
-
-with open(SD_UNET_CONFIG_FILE, "r") as f:
-    config = json.load(f)
 
 re_compiled = {}
 re_digits = re.compile(r"\d+")
@@ -98,7 +94,7 @@ class SDLoRAConverter(LoRAStateDictConverter):
         return key
 
     def _replace_kohya_unet_key(self, key):
-        rename_dict = config["civitai"]["rename_dict"]
+        rename_dict = sd_unet_config["civitai"]["rename_dict"]
         key = convert_diffusers_name_to_compvis(key)
         key = re.sub(r"(\d+)_", r"\1.", key)
         key = re.sub(r"_(\d+)", r".\1", key)
