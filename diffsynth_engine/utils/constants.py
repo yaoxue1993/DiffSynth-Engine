@@ -8,9 +8,10 @@ CONF_PATH = os.path.join(PACKAGE_ROOT, "conf")
 # tokenizers
 FLUX_TOKENIZER_1_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "flux", "tokenizer_1")
 FLUX_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "flux", "tokenizer_2")
-SDXL_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "stable_diffusion_xl", "tokenizer")
-SDXL_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "stable_diffusion_xl", "tokenizer_2")
+SDXL_TOKENIZER_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "sdxl", "tokenizer")
+SDXL_TOKENIZER_2_CONF_PATH = os.path.join(CONF_PATH, "tokenizers", "sdxl", "tokenizer_2")
 # models
+VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "components", "vae.json")
 FLUX_DIT_CONFIG_FILE = os.path.join(CONF_PATH, "models", "flux", "flux_dit.json")
 FLUX_TEXT_ENCODER_CONFIG_FILE = os.path.join(CONF_PATH, "models", "flux", "flux_text_encoder.json")
 FLUX_VAE_CONFIG_FILE = os.path.join(CONF_PATH, "models", "flux", "flux_vae.json")
