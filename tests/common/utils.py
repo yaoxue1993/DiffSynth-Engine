@@ -14,7 +14,6 @@ def make_deterministic(seed=42):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     torch.use_deterministic_algorithms(True, warn_only=True)
-    print("make_deterministic")
 
 
 def compute_normalized_ssim(image1: Image.Image, image2: Image.Image):

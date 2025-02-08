@@ -25,6 +25,9 @@ class TestFluxTextEncoder(TestCase):
         loaded_state_dict = load_file(cls._t5_model_path)
         cls.text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict,
                                                                device='cuda:0', dtype=torch.bfloat16).eval()
+        # use eager attention to aligned with T5
+        for encoder in cls.text_encoder_2.encoders:
+            encoder.attn.attn_implementation = "eager"
         cls.texts = ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"]
 
     def test_encoder_1(self):

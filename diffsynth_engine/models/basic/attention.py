@@ -1,20 +1,10 @@
 import torch
 import torch.nn as nn
-from einops import rearrange, repeat
+from einops import rearrange
 
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
-
-
-def low_version_attention(query, key, value, attn_bias=None, scale=None):
-    scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
-    query = query * scale
-    attn = torch.matmul(query, key.transpose(-2, -1))
-    if attn_bias is not None:
-        attn = attn + attn_bias
-    attn = attn.softmax(-1)
-    return attn @ value
 
 
 class Attention(nn.Module):
@@ -28,7 +18,7 @@ class Attention(nn.Module):
         bias_kv=False,
         bias_out=False,
         scale=None,
-        use_xformers=False,
+        attn_implementation: str = "sdpa",
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
     ):
@@ -44,13 +34,36 @@ class Attention(nn.Module):
         self.to_out = nn.Linear(dim_inner, q_dim, bias=bias_out, device=device, dtype=dtype)
 
         self.scale = scale
-        self.use_xformers = use_xformers
-        if self.use_xformers:
+        self.attn_implementation = self._get_actual_attn_implementation(attn_implementation)
+
+    @staticmethod
+    def _get_actual_attn_implementation(attn_implementation):
+        supported_implementations = ("xformers", "sdpa", "eager")
+        if attn_implementation not in supported_implementations:
+            raise ValueError(
+                f"attn_implementation must be one of {supported_implementations}, but got '{attn_implementation}'"
+            )
+
+        actual_implementation = "eager" if attn_implementation == "eager" else ""
+        if attn_implementation == "xformers":
             try:
                 from xformers.ops import memory_efficient_attention
-            except:
-                logger.warning("xformers is not supported in this platform, so use_xformers is set to False")
-                self.use_xformers = False
+
+                actual_implementation = "xformers"
+            except ImportError:
+                pass
+        if not actual_implementation or attn_implementation == "sdpa":
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+                actual_implementation = "sdpa"
+
+        if actual_implementation != attn_implementation:
+            warning_msg = (
+                "xformers is not supported on this platform"
+                if attn_implementation == "xformers"
+                else "torch.nn.functional.scaled_dot_product_attention is not supported"
+            )
+            logger.warning(f"{warning_msg}, fallback to '{actual_implementation}' attention")
+        return actual_implementation
 
     def sdpa_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         q = self.to_q(hidden_states)
@@ -70,7 +83,6 @@ class Attention(nn.Module):
     def xformers_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         import xformers.ops as xops
 
-        bs = hidden_states.shape[0]
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
@@ -78,32 +90,35 @@ class Attention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=self.num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=self.num_heads)
 
-        if attn_mask is not None:
-            attn_mask = repeat(attn_mask, "1 ... -> b ...", b=bs)
-
         hidden_states = xops.memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=self.scale)
         hidden_states = rearrange(hidden_states, "b s n d -> b s (n d)")
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
         return hidden_states
 
-    def original_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
-        bs = hidden_states.shape[0]
+    def eager_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
         q = self.to_q(hidden_states)
         k = self.to_k(encoder_hidden_states)
         v = self.to_v(encoder_hidden_states)
-        q = rearrange(q, "b s (n d) -> (b n) s d", n=self.num_heads)
-        k = rearrange(k, "b s (n d) -> (b n) s d", n=self.num_heads)
-        v = rearrange(v, "b s (n d) -> (b n) s d", n=self.num_heads)
+        q = rearrange(q, "b s (n d) -> b n s d", n=self.num_heads)
+        k = rearrange(k, "b s (n d) -> b n s d", n=self.num_heads)
+        v = rearrange(v, "b s (n d) -> b n s d", n=self.num_heads)
 
-        if attn_mask is not None:
-            attn_mask = repeat(attn_mask, "1 n ... -> (b n) ...", b=bs)
-
-        hidden_states = low_version_attention(q, k, v, attn_bias=attn_mask, scale=self.scale)
-        hidden_states = rearrange(hidden_states, "(b n) s d -> b s (n d)", n=self.num_heads)
+        hidden_states = self._eager_attn(q, k, v, attn_bias=attn_mask, scale=self.scale)
+        hidden_states = rearrange(hidden_states, "b n s d -> b s (n d)", n=self.num_heads)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states = self.to_out(hidden_states)
         return hidden_states
+
+    @staticmethod
+    def _eager_attn(query, key, value, attn_bias=None, scale=None):
+        scale = 1 / query.shape[-1] ** 0.5 if scale is None else scale
+        query = query * scale
+        attn = torch.matmul(query, key.transpose(-2, -1))
+        if attn_bias is not None:
+            attn = attn + attn_bias
+        attn = attn.softmax(-1)
+        return attn @ value
 
     def forward(
         self,
@@ -113,10 +128,9 @@ class Attention(nn.Module):
     ):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        if self.use_xformers:
-            return self.xformers_attn(hidden_states, encoder_hidden_states, attn_mask)
 
-        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
-            # 检查是否支持sdpa
+        if self.attn_implementation == "xformers":
+            return self.xformers_attn(hidden_states, encoder_hidden_states, attn_mask)
+        if self.attn_implementation == "sdpa":
             return self.sdpa_attn(hidden_states, encoder_hidden_states, attn_mask)
-        return self.original_attn(hidden_states, encoder_hidden_states, attn_mask)
+        return self.eager_attn(hidden_states, encoder_hidden_states, attn_mask)

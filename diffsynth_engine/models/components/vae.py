@@ -75,7 +75,7 @@ class VAEAttentionBlock(nn.Module):
                 bias_q=True,
                 bias_kv=True,
                 bias_out=True,
-                use_xformers=True,
+                attn_implementation="xformers",
                 device=device,
                 dtype=dtype
             )
