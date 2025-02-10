@@ -4,7 +4,7 @@ import numpy as np
 from safetensors.torch import load_file, save_file
 
 from diffsynth_engine.models.sd import SDVAEEncoder, SDVAEDecoder
-from diffsynth_engine.utils.download import download_model, ensure_directory_exists
+from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 
 
@@ -326,7 +326,7 @@ class TestSDVAE(ImageTestCase):
                             use_quant_conv=True,
                             use_post_quant_conv=True)
         vae = vae.to(device='cuda:0', dtype=torch.float32).eval()
-        loaded_state_dict = load_file(self._sd_model_path)
+        loaded_state_dict = load_file(self.model_path)
         vae.load_state_dict(_convert(loaded_state_dict))
 
         image_tensor = torch.tensor(np.array(self._input_image, dtype=np.float32) * (2 / 255) - 1)
