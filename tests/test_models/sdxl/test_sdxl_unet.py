@@ -2,12 +2,12 @@ import torch
 
 from diffsynth_engine.models.sdxl.sdxl_unet import SDXLUNet
 from tests.common.test_case import ImageTestCase
-
+from diffsynth_engine import fetch_modelscope_model
 
 class TestSDXLUNet(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = cls.download_model("modelscope://muse/sd_xl_base_1.0?revision=20240425120250")
+        model_path = fetch_modelscope_model("muse/sd_xl_base_1.0", revision="20240425120250", subpath="sd_xl_base_1.0.safetensors")
         cls.unet = SDXLUNet.from_pretrained(model_path, device='cuda:0', dtype=torch.float16)
 
     def test_txt2img(self):

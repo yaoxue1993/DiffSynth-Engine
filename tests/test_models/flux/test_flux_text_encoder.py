@@ -6,6 +6,7 @@ from diffsynth_engine.tokenizers import CLIPTokenizer, T5TokenizerFast
 from diffsynth_engine.models.flux import FluxTextEncoder1, FluxTextEncoder2
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils.download import ensure_directory_exists
+from diffsynth_engine import fetch_modelscope_model
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
@@ -15,10 +16,8 @@ class TestFluxTextEncoder(TestCase):
         cls.tokenizer_1 = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         cls.tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
 
-        cls._clip_l_model_path = cls.download_model(
-            "modelscope://muse/flux_clip_l?revision=20241209&endpoint=www.modelscope.cn")
-        cls._t5_model_path = cls.download_model(
-            "modelscope://muse/google_t5_v1_1_xxl?revision=20241024105236&endpoint=www.modelscope.cn")
+        cls._clip_l_model_path = fetch_modelscope_model("muse/flux_clip_l", revision="20241209", subpath="clip_l_bf16.safetensors")
+        cls._t5_model_path = fetch_modelscope_model("muse/google_t5_v1_1_xxl", revision="20241024105236", subpath="t5xxl_v1_1_bf16.safetensors")
         loaded_state_dict = load_file(cls._clip_l_model_path)
         cls.text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict,
                                                                device='cuda:0', dtype=torch.bfloat16).eval()

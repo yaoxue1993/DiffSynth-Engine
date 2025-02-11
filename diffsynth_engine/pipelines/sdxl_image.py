@@ -1,12 +1,12 @@
 import os
 import re
 import torch
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple, Optional
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
-
+from dataclasses import dataclass
 from diffsynth_engine.models.base import LoRAStateDictConverter, split_suffix
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
 from diffsynth_engine.models.basic.timestep import TemporalTimesteps
@@ -97,7 +97,18 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
         raise ValueError(f"Unsupported key: {key}")
 
 
-# TODO: add controlnet/ipadapter/kolors
+@dataclass
+class SDXLModelConfig:
+    model_path: str
+    vae_path: Optional[str] = None    
+    clip_l_path: Optional[str] = None
+    clip_g_path: Optional[str] = None    
+
+    vae_dtype: torch.dtype = torch.float32
+    unet_dtype: torch.dtype = torch.float16
+    clip_l_dtype: torch.dtype = torch.float16
+    clip_g_dtype: torch.dtype = torch.float16
+
 class SDXLImagePipeline(BasePipeline):
     lora_converter = SDXLLoRAConverter()
 
@@ -134,7 +145,7 @@ class SDXLImagePipeline(BasePipeline):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
+        pretrained_model_paths: str | SDXLModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
         cpu_offload: bool = False,
@@ -143,25 +154,45 @@ class SDXLImagePipeline(BasePipeline):
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
-        loaded_state_dict = {}
         if isinstance(pretrained_model_paths, str):
-            pretrained_model_paths = [pretrained_model_paths]
+            model_config = SDXLModelConfig(model_path=pretrained_model_paths, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype)
+        else:
+            model_config = pretrained_model_paths
+        
+        assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"
+        if model_config.vae_path is not None:
+            assert os.path.isfile(model_config.vae_path)
+        if model_config.clip_l_path is not None:
+            assert os.path.isfile(model_config.clip_l_path) and model_config.clip_l_path.endswith(".safetensors"), f"{model_config.clip_l_path} is not a .safetensors file"
+        if model_config.clip_g_path is not None:
+            assert os.path.isfile(model_config.clip_g_path) and model_config.clip_g_path.endswith(".safetensors"), f"{model_config.clip_g_path} is not a .safetensors file"
 
-        for path in pretrained_model_paths:
-            assert os.path.isfile(path) and path.endswith(".safetensors"), f"{path} is not a .safetensors file"
-            logger.info(f"loading state dict from {path} ...")
-            state_dict = load_file(path, device="cpu")
-            loaded_state_dict.update(state_dict)
+        unet_state_dict = load_file(model_config.model_path, device="cpu")
+
+        if model_config.vae_path is not None:
+            vae_state_dict = load_file(model_config.vae_path, device="cpu")
+        else:
+            vae_state_dict = unet_state_dict
+
+        if model_config.clip_l_path is not None:
+            clip_l_state_dict = load_file(model_config.clip_l_path, device="cpu")
+        else:
+            clip_l_state_dict = unet_state_dict 
+
+        if model_config.clip_g_path is not None:
+            clip_g_state_dict = load_file(model_config.clip_g_path, device="cpu")
+        else:
+            clip_g_state_dict = unet_state_dict        
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            text_encoder = SDXLTextEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-            text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-            unet = SDXLUNet.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-        vae_decoder = SDXLVAEDecoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
-        vae_encoder = SDXLVAEEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
+            text_encoder = SDXLTextEncoder.from_state_dict(clip_l_state_dict, device=init_device, dtype=model_config.clip_l_dtype)
+            text_encoder_2 = SDXLTextEncoder2.from_state_dict(clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype)
+            unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
+        vae_decoder = SDXLVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+        vae_encoder = SDXLVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         pipe = cls(
             tokenizer=tokenizer,

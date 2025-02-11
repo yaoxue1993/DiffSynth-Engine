@@ -1,2 +1,2 @@
-from .utils.download import download_model
+from .utils.download import fetch_modelscope_model, fetch_civitai_model
 from .pipelines import FluxImagePipeline, SDXLImagePipeline, SDImagePipeline

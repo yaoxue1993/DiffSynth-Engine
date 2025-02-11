@@ -6,7 +6,6 @@ from PIL import Image
 from typing import Dict
 from safetensors.torch import load_file
 
-from diffsynth_engine.utils.download import download_model
 from tests.common.utils import make_deterministic, compute_normalized_ssim
 
 TEST_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,9 +20,6 @@ class TestCase(unittest.TestCase):
         self.seed = 42
         make_deterministic(self.seed)
 
-    @staticmethod
-    def download_model(path: str) -> str:
-        return download_model(path)
 
     @staticmethod
     def get_device_name() -> str:

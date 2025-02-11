@@ -29,7 +29,3 @@ GB = 1024 * MB
 TB = 1024 * GB
 
 # url scheme
-LOCAL_SCHEME = "local"
-HTTP_SCHEME = "http"
-HTTPS_SCHEME = "https"
-MODELSCOPE_SCHEME = "modelscope"

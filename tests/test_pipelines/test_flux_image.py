@@ -1,18 +1,13 @@
 from ..common.test_case import ImageTestCase
 
 from diffsynth_engine.pipelines import FluxImagePipeline
-
+from diffsynth_engine import fetch_modelscope_model
 
 class TestFLUXImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        clip_l_path = cls.download_model("modelscope://muse/flux_clip_l?revision=20241209&endpoint=www.modelscope.cn")
-        t5xxl_path = cls.download_model(
-            "modelscope://muse/google_t5_v1_1_xxl?revision=20241024105236&endpoint=www.modelscope.cn")
-        flux_with_vae_path = cls.download_model(
-            "modelscope://muse/flux-with-vae?revision=20240902173035&endpoint=www.modelscope.cn")
-        model_paths = [clip_l_path, t5xxl_path, flux_with_vae_path]
-        cls.pipe = FluxImagePipeline.from_pretrained(model_paths).eval()
+        model_path = fetch_modelscope_model("muse/flux-with-vae", revision="20240902173035", subpath="flux_with_vae.safetensors")
+        cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
 
     def test_txt2img(self):
         image = self.pipe(
@@ -38,7 +33,7 @@ class TestFLUXImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_inpainting.png", threshold=0.99)\
 
     def test_fused_lora(self):
-        lora_model_path = self.download_model("modelscope://MAILAND/Merjic-Maria?revision=v1.0&endpoint=www.modelscope.cn")
+        lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", subpath="12.safetensors")
         self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="1 girl, maria",
@@ -51,7 +46,7 @@ class TestFLUXImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
     
     def test_unfused_lora(self):
-        lora_model_path = self.download_model("modelscope://MAILAND/Merjic-Maria?revision=v1.0&endpoint=www.modelscope.cn")
+        lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", subpath="12.safetensors")
         self.pipe.patch_lora([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="1 girl, maria",

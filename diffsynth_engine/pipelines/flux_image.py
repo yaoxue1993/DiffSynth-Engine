@@ -2,12 +2,12 @@ import re
 import os
 import torch
 import math
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple, Optional
 from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
-
+from dataclasses import dataclass
 from diffsynth_engine.models.flux import (
     FluxTextEncoder1,
     FluxTextEncoder2,
@@ -25,6 +25,7 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
+from diffsynth_engine.utils.download import fetch_modelscope_model
 
 logger = logging.get_logger(__name__)
 
@@ -175,6 +176,20 @@ def calculate_shift(
     return mu
 
 
+@dataclass
+class FluxModelConfig:
+    model_path: str
+    vae_path: Optional[str] = None    
+    t5_path: Optional[str] = None    
+    clip_path: Optional[str] = None
+
+    vae_dtype: torch.dtype = torch.float32
+    dit_dtype: torch.dtype = torch.bfloat16
+    t5_dtype: torch.dtype = torch.bfloat16
+    clip_dtype: torch.dtype = torch.bfloat16
+    
+
+
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
 
@@ -210,7 +225,7 @@ class FluxImagePipeline(BasePipeline):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
+        pretrained_model_paths: str | FluxModelConfig ,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = False,
@@ -218,25 +233,41 @@ class FluxImagePipeline(BasePipeline):
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
-        loaded_state_dict = {}
         if isinstance(pretrained_model_paths, str):
-            pretrained_model_paths = [pretrained_model_paths]
+            model_config = FluxModelConfig(model_path=pretrained_model_paths, dit_dtype=dtype, t5_dtype=dtype, clip_dtype=dtype)
+        else:
+            model_config = pretrained_model_paths
+        
+        if model_config.clip_path is None:
+            model_config.clip_path = fetch_modelscope_model(model_id="muse/flux_clip_l", revision="20241209", subpath="clip_l_bf16.safetensors")
+        if model_config.t5_path is None:
+            model_config.t5_path = fetch_modelscope_model("muse/google_t5_v1_1_xxl", revision="20241024105236", subpath="t5xxl_v1_1_bf16.safetensors")
+        if model_config.vae_path is None:
+            model_config.vae_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", subpath="ae.safetensors")
 
-        for path in pretrained_model_paths:
-            assert os.path.isfile(path) and path.endswith(".safetensors"), f"{path} is not a .safetensors file"
-            logger.info(f"loading state dict from {path} ...")
-            state_dict = load_file(path, device="cpu")
-            loaded_state_dict.update(state_dict)
+        assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"        
+        assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), f"{model_config.clip_path} is not a .safetensors file"
+        assert os.path.isfile(model_config.t5_path) and model_config.t5_path.endswith(".safetensors"), f"{model_config.t5_path} is not a .safetensors file"
+        assert os.path.isfile(model_config.vae_path)
+
+        logger.info(f"loading state dict from {model_config.model_path} ...")
+        dit_state_dict = load_file(model_config.model_path, device="cpu")
+        logger.info(f"loading state dict from {model_config.clip_path} ...")
+        clip_state_dict = load_file(model_config.clip_path, device="cpu")
+        logger.info(f"loading state dict from {model_config.t5_path} ...")
+        t5_state_dict = load_file(model_config.t5_path, device="cpu")
+        logger.info(f"loading state dict from {model_config.vae_path} ...")
+        vae_state_dict = load_file(model_config.vae_path, device="cpu")
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            dit = FluxDiT.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-            text_encoder_1 = FluxTextEncoder1.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-        text_encoder_2 = FluxTextEncoder2.from_state_dict(loaded_state_dict, device=init_device, dtype=dtype)
-        vae_decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
-        vae_encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device=init_device, dtype=torch.float32)
+            dit = FluxDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype)
+            text_encoder_1 = FluxTextEncoder1.from_state_dict(clip_state_dict, device=init_device, dtype=model_config.clip_dtype)
+        text_encoder_2 = FluxTextEncoder2.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
+        vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+        vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         pipe = cls(
             tokenizer=tokenizer,

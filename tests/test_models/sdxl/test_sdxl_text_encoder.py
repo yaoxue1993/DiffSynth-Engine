@@ -5,9 +5,9 @@ from safetensors.torch import load_file, save_file
 from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
-from diffsynth_engine.utils.download import download_model, ensure_directory_exists
+from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
-
+from diffsynth_engine import fetch_modelscope_model
 
 class TestSDXLTextEncoder(TestCase):
     @classmethod
@@ -15,9 +15,8 @@ class TestSDXLTextEncoder(TestCase):
         cls.tokenizer_1 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         cls.tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
 
-        cls.model_path = cls.download_model(
-            "modelscope://muse/sd_xl_base_1.0?revision=20240425120250&endpoint=www.modelscope.cn")
-        loaded_state_dict = load_file(cls.model_path)
+        model_path = fetch_modelscope_model("muse/sd_xl_base_1.0", revision="20240425120250", subpath="sd_xl_base_1.0.safetensors")
+        loaded_state_dict = load_file(model_path)
         cls.text_encoder_1 = SDXLTextEncoder.from_state_dict(loaded_state_dict,
                                                               device='cuda:0', dtype=torch.float16).eval()
         cls.text_encoder_2 = SDXLTextEncoder2.from_state_dict(loaded_state_dict,

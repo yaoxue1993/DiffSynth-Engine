@@ -4,15 +4,15 @@ import numpy as np
 from safetensors.torch import load_file, save_file
 
 from diffsynth_engine.models.sd import SDVAEEncoder, SDVAEDecoder
-from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
+from diffsynth_engine import fetch_modelscope_model
 
 
 class TestSDVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model_path = cls.download_model("modelscope://muse/v1-5-pruned-emaonly?revision=20240118200020")
-        loaded_state_dict = load_file(cls.model_path)
+        model_path = fetch_modelscope_model("muse/v1-5-pruned-emaonly", revision="20240118200020", subpath="v1-5-pruned-emaonly.safetensors")
+        loaded_state_dict = load_file(model_path)
         cls.encoder = SDVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
         cls.decoder = SDVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
         cls.latent_channels = 4

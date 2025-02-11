@@ -5,14 +5,14 @@ from safetensors.torch import load_file, save_file
 
 from diffsynth_engine.models.flux import FluxVAEEncoder, FluxVAEDecoder
 from diffsynth_engine.utils.download import ensure_directory_exists
+from diffsynth_engine import fetch_modelscope_model
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 
 
 class TestFluxVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        cls._vae_model_path = cls.download_model(
-            "modelscope://muse/flux_vae?revision=20241015120836&endpoint=www.modelscope.cn")
+        cls._vae_model_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", subpath="ae.safetensors")
         loaded_state_dict = load_file(cls._vae_model_path)
         cls.encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
         cls.decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
