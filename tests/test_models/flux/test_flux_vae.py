@@ -12,7 +12,7 @@ from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
 class TestFluxVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        cls._vae_model_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", subpath="ae.safetensors")
+        cls._vae_model_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
         loaded_state_dict = load_file(cls._vae_model_path)
         cls.encoder = FluxVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
         cls.decoder = FluxVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()

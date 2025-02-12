@@ -239,11 +239,11 @@ class FluxImagePipeline(BasePipeline):
             model_config = pretrained_model_paths
         
         if model_config.clip_path is None:
-            model_config.clip_path = fetch_modelscope_model(model_id="muse/flux_clip_l", revision="20241209", subpath="clip_l_bf16.safetensors")
+            model_config.clip_path = fetch_modelscope_model(model_id="muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors")
         if model_config.t5_path is None:
-            model_config.t5_path = fetch_modelscope_model("muse/google_t5_v1_1_xxl", revision="20241024105236", subpath="t5xxl_v1_1_bf16.safetensors")
+            model_config.t5_path = fetch_modelscope_model("muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors")
         if model_config.vae_path is None:
-            model_config.vae_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", subpath="ae.safetensors")
+            model_config.vae_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
 
         assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"        
         assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), f"{model_config.clip_path} is not a .safetensors file"

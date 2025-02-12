@@ -15,7 +15,7 @@ class TestSDTextEncoder(TestCase):
     def setUpClass(cls):
         cls.tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
 
-        model_path = fetch_modelscope_model("muse/v1-5-pruned-emaonly", revision="20240118200020", subpath="v1-5-pruned-emaonly.safetensors")        
+        model_path = fetch_modelscope_model("muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors")        
         loaded_state_dict = load_file(model_path)
         cls.text_encoder = SDTextEncoder.from_state_dict(loaded_state_dict,
                                                               device='cuda:0', dtype=torch.float16).eval()

@@ -11,7 +11,7 @@ from diffsynth_engine import fetch_modelscope_model
 class TestSDVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model("muse/v1-5-pruned-emaonly", revision="20240118200020", subpath="v1-5-pruned-emaonly.safetensors")
+        model_path = fetch_modelscope_model("muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors")
         loaded_state_dict = load_file(model_path)
         cls.encoder = SDVAEEncoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
         cls.decoder = SDVAEDecoder.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.float32).eval()
