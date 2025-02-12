@@ -1,6 +1,6 @@
 from diffsynth_engine import fetch_modelscope_model, FluxImagePipeline
 
-model_path = fetch_modelscope_model("black-forest-labs/FLUX.1-dev", path="flux1-dev.safetensors")
+model_path = fetch_modelscope_model("muse/flux-with-vae", path="flux_with_vae.safetensors")
 lora_path = fetch_modelscope_model("DonRat/MAJICFLUS_SuperChinesestyleheongsam", path="麦橘超国风旗袍.safetensors")
 pipe = FluxImagePipeline.from_pretrained(model_path, device='cuda:0')
 pipe.patch_lora(path=lora_path, scale=1.0)
