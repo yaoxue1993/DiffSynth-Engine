@@ -33,7 +33,7 @@ class TestSDImage(ImageTestCase):
 
     def test_unfused_lora(self):
         lora_model_path = fetch_modelscope_model("MusePublic/148_lora_SD_1_5", revision="765", subpath="765.safetensors")
-        self.pipe.patch_lora([(lora_model_path, 0.8)])
+        self.pipe.patch_loras([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="a girl, drawing",
             width=512,
@@ -41,12 +41,12 @@ class TestSDImage(ImageTestCase):
             num_inference_steps=20,
             seed=42,
         )
-        self.pipe.unpatch_lora()
+        self.pipe.unpatch_loras()
         self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)
 
     def test_fused_lora(self):
         lora_model_path = fetch_modelscope_model("MusePublic/148_lora_SD_1_5", revision="765", subpath="765.safetensors")
-        self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
+        self.pipe.patch_loras([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="a girl, drawing",
             width=512,
@@ -54,5 +54,5 @@ class TestSDImage(ImageTestCase):
             num_inference_steps=20,
             seed=42,
         )
-        self.pipe.unpatch_lora()
+        self.pipe.unpatch_loras()
         self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)

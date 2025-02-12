@@ -36,7 +36,7 @@ class TestSDXLImage(ImageTestCase):
 
     def test_unfused_lora(self):
         lora_model_path = fetch_modelscope_model("MusePublic/89_lora_SD_XL", revision="532", subpath="532.safetensors")
-        self.pipe.patch_lora([(lora_model_path, 0.8)])
+        self.pipe.patch_loras([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="a beautiful girl, chibi",
             width=1024,
@@ -45,12 +45,12 @@ class TestSDXLImage(ImageTestCase):
             seed=42,
             clip_skip=2,
         )
-        self.pipe.unpatch_lora()
+        self.pipe.unpatch_loras()
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
 
     def test_fused_lora(self):
         lora_model_path = fetch_modelscope_model("MusePublic/89_lora_SD_XL", revision="532", subpath="532.safetensors")
-        self.pipe.patch_lora([(lora_model_path, 0.8)], fused=True)
+        self.pipe.patch_loras([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="a beautiful girl, chibi",
             width=1024,
@@ -59,6 +59,6 @@ class TestSDXLImage(ImageTestCase):
             seed=42,
             clip_skip=2,
         )
-        self.pipe.unpatch_lora()
+        self.pipe.unpatch_loras()
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
         

@@ -19,10 +19,9 @@ logger = logging.get_logger(__name__)
 def fetch_modelscope_model(
         model_id:str, 
         revision:Optional[str]=None, 
-        subpath:Optional[str]=None, 
+        path:Optional[str]=None, 
         access_token:Optional[str]=None
     ) -> str:
-
     lock_file_name = f"modelscope.{model_id.replace('/', '--')}.{revision if revision else '__version'}.lock"
     lock_file_path = os.path.join(DIFFSYNTH_FILELOCK_DIR, lock_file_name)
     ensure_directory_exists(lock_file_path)
@@ -31,14 +30,23 @@ def fetch_modelscope_model(
         api.login(access_token)        
     with HeartbeatFileLock(lock_file_path):
         directory = os.path.join(DIFFSYNTH_CACHE, "modelscope", model_id, revision if revision else "__version")    
-        path = snapshot_download(
+        dirpath = snapshot_download(
             model_id, 
             revision=revision, 
             local_dir=directory, 
         )
-    if subpath is not None:
-        path = os.path.join(path, subpath)
-    return path
+    if path is not None:
+        path = os.path.join(dirpath, path)
+    else:
+        path = dirpath
+    if not path.endswith(".safetensors"):
+        try:
+            safetensors_path = __fetch_safetensors(path)
+            logger.info(f"Fetch safetensors file {safetensors_path} from {path}")
+            return safetensors_path
+        except ValueError:
+            return path
+    return path    
 
 def fetch_civitai_model(model_url:str) -> str:
     """
@@ -94,3 +102,19 @@ def fetch_civitai_model(model_url:str) -> str:
 
 def ensure_directory_exists(filename: str):
     Path(filename).parent.mkdir(parents=True, exist_ok=True)
+
+
+def __fetch_safetensors(dirpath:str) -> str:
+    all_safetensors = []
+    for filename in os.listdir(dirpath):
+        if filename.endswith(".safetensors"):
+            all_safetensors.append(os.path.join(dirpath, filename))
+    if len(all_safetensors) == 1:
+        return all_safetensors[0]
+    elif len(all_safetensors) == 0:
+        raise ValueError(f"No safetensors file found in {dirpath}")
+    else:
+        raise ValueError(f"Multiple safetensors files found in {dirpath}, please specify the file name")
+        
+    
+
