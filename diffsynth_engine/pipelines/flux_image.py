@@ -188,8 +188,6 @@ class FluxModelConfig:
     t5_dtype: torch.dtype = torch.bfloat16
     clip_dtype: torch.dtype = torch.bfloat16
     
-
-
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
 

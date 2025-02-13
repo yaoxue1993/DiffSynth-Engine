@@ -16,14 +16,14 @@ from diffsynth_engine.utils.constants import MB
 
 logger = logging.get_logger(__name__)
 
-def fetch_model(model_id_or_url:str, revision:Optional[str]=None, path:Optional[str]=None, access_token:Optional[str]=None) -> str:
-    if model_id_or_url.startswith("http") or model_id_or_url.startswith("https"):
-        if "civitai" in model_id_or_url:
-            return fetch_civitai_model(model_id_or_url)
-        else:
-            raise ValueError("Invalid model URL")    
+def fetch_model(model_uri:str, revision:Optional[str]=None, path:Optional[str]=None, access_token:Optional[str]=None, src_type:str ='modelscope') -> str:
+    if src_type == 'modelscope':
+        return fetch_modelscope_model(model_uri, revision, path, access_token)
+    elif src_type == 'civitai':
+        return fetch_civitai_model(model_uri)
     else:
-        return fetch_modelscope_model(model_id_or_url, revision, path, access_token)
+        raise ValueError(f"Invalid src_type: {src_type}")
+    
 
 def fetch_modelscope_model(
         model_id:str, 
