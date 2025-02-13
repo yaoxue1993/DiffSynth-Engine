@@ -85,6 +85,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
         suffix_rename_dict = config["civitai"]["suffix_rename_dict"]
         state_dict_ = {}
         for name, param in state_dict.items():
+            name = name.replace('model.diffusion_model.', '')
             names = name.split(".")
             if name in rename_dict:
                 if name.startswith("final_layer.adaLN_modulation.1."):
@@ -105,7 +106,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
             return state_dict_
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        if "txt_in.weight" in state_dict:
+        if "txt_in.weight" in state_dict or 'model.diffusion_model.txt_in.weight' in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
         elif "time_text_embed.timestep_embedder.linear_1.weight" in state_dict:
