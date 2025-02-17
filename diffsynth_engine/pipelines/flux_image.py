@@ -282,10 +282,10 @@ class FluxImagePipeline(BasePipeline):
             pipe.enable_cpu_offload()
         return pipe
 
-    def patch_lora(self, path: str, scale: float, fused: bool = False, save_original_weight: bool = True):
-        self.patch_loras([(path, scale)], fused, save_original_weight)
+    def load_lora(self, path: str, scale: float, fused: bool = False, save_original_weight: bool = True):
+        self.load_loras([(path, scale)], fused, save_original_weight)
 
-    def patch_loras(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
+    def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = False, save_original_weight: bool = True):
         for lora_path, lora_scale in lora_list:
             state_dict = load_file(lora_path, device="cpu")
             lora_state_dict = self.lora_converter.convert(state_dict)
@@ -311,7 +311,7 @@ class FluxImagePipeline(BasePipeline):
                     else:
                         module.add_lora(**lora_args)
 
-    def unpatch_loras(self):
+    def unload_loras(self):
         for key, module in self.dit.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
