@@ -34,7 +34,7 @@ class TestFLUXImage(ImageTestCase):
 
     def test_fused_lora(self):
         lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
-        self.pipe.patch_loras([(lora_model_path, 0.8)], fused=True)
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="1 girl, maria",
             width=1024,
@@ -42,12 +42,12 @@ class TestFLUXImage(ImageTestCase):
             num_inference_steps=50,
             seed=42,
         )
-        self.pipe.unpatch_loras()
+        self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
     
     def test_unfused_lora(self):
         lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
-        self.pipe.patch_loras([(lora_model_path, 0.8)])
+        self.pipe.load_loras([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="1 girl, maria",
             width=1024,
@@ -55,5 +55,5 @@ class TestFLUXImage(ImageTestCase):
             num_inference_steps=50,
             seed=42,
         )
-        self.pipe.unpatch_loras()
+        self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.98)
