@@ -63,6 +63,9 @@ class Attention(nn.Module):
                 else "torch.nn.functional.scaled_dot_product_attention is not supported"
             )
             logger.warning(f"{warning_msg}, fallback to '{actual_implementation}' attention")
+        if torch.backends.mps.is_available():
+            logger.warning("Attention on MPS is not supported, fallback to 'eager' attention")
+            actual_implementation = "eager"
         return actual_implementation
 
     def sdpa_attn(self, hidden_states, encoder_hidden_states, attn_mask=None):
