@@ -67,16 +67,21 @@ image = pipe(prompt="a girl, qipao")
 image.save("image.png")
 ```
 
-## License
-This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+## Showcase
+
+<img src="assets/showcase.jpeg" />
 
 ## Contact
+
 If you have any questions or feedback, please scan the QR code or send email to muse@alibaba-inc.com.
 
 <div style="display: flex; justify-content: space-between;">
     <img src="assets/weixin.jpg" alt="weixin" style="zoom: 33%;" />
     <img src="assets/dingtalk.png" alt="dingtalk" style="zoom: 60%;" />
 </div>
+
+## License
+This project is licensed under the Apache License 2.0. See the LICENSE file for details.
 
 ## Citation
 
