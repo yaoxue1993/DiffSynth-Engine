@@ -7,22 +7,23 @@
 [![GitHub latest commit](https://badgen.net/github/last-commit/modelscope/DiffSynth-Engine)](https://GitHub.com/modelscope/DiffSynth-Engine/commit/)
 
 <p align="center">
-<a href="https://trendshift.io/repositories/10946" target="_blank"><img src="https://trendshift.io/api/badge/repositories/10946" alt="modelscope%2FDiffSynth-Studio | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/10946" target="_blank"><img src="https://trendshift.io/api/badge/repositories/10946" alt="modelscope%2FDiffSynth-Engine | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
 
 Diffsynth Engine is a high-performance diffusion inference engine designed for developers.
 
-Key Features:
-- Clean and Readable Code: Fully re-implements the Diffusion sampler and scheduler without relying on third-party libraries like k-diffusion, ldm, or sgm.
+**Key Features:**
 
-- Extensive Model Support: Compatible with multiple formats (e.g., CivitAI format) of base models and LoRA models , catering to diverse use cases.
+- **Clean and Readable Code:** Fully re-implements the Diffusion sampler and scheduler without relying on third-party libraries like k-diffusion, ldm, or sgm.
 
-- Flexible Memory Management: Supports various levels of model quantization (e.g., FP8, INT8) 
+- **Extensive Model Support:** Compatible with multiple formats (e.g., CivitAI format) of base models and LoRA models , catering to diverse use cases.
+
+- **Flexible Memory Management:** Supports various levels of model quantization (e.g., FP8, INT8) 
 and offload strategies, enabling users to run large models (e.g., Flux.1 Dev) on limited GPU memory.
 
-- High-Performance Inference: Optimizes the inference pipeline to achieve fast generation across various hardware environments.
+- **High-Performance Inference:** Optimizes the inference pipeline to achieve fast generation across various hardware environments.
 
-- Platform Compatibility: Supports Windows, macOS (Apple Silicon), and Linux, ensuring a smooth experience across different operating systems.
+- **Platform Compatibility:** Supports Windows, macOS (Apple Silicon), and Linux, ensuring a smooth experience across different operating systems.
 
 ## Quick Start
 ### Requirements
