@@ -1,4 +1,15 @@
 # DiffSynth-Engine
+
+[![PyPI](https://img.shields.io/pypi/v/DiffSynth-Engine)](https://pypi.org/project/DiffSynth-Engine/)
+[![license](https://img.shields.io/github/license/modelscope/DiffSynth-Engine.svg)](https://github.com/modelscope/DiffSynth-Engine/blob/master/LICENSE)
+[![open issues](https://isitmaintained.com/badge/open/modelscope/DiffSynth-Engine.svg)](https://github.com/modelscope/DiffSynth-Engine/issues)
+[![GitHub pull-requests](https://img.shields.io/github/issues-pr/modelscope/DiffSynth-Engine.svg)](https://GitHub.com/modelscope/DiffSynth-Engine/pull/)
+[![GitHub latest commit](https://badgen.net/github/last-commit/modelscope/DiffSynth-Engine)](https://GitHub.com/modelscope/DiffSynth-Engine/commit/)
+
+<p align="center">
+<a href="https://trendshift.io/repositories/10946" target="_blank"><img src="https://trendshift.io/api/badge/repositories/10946" alt="modelscope%2FDiffSynth-Studio | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</p>
+
 Diffsynth Engine is a high-performance diffusion inference engine designed for developers.
 
 Key Features:
@@ -59,9 +70,15 @@ image.save("image.png")
 This project is licensed under the Apache License 2.0. See the LICENSE file for details.
 
 ## Contact
+If you have any questions or feedback, please scan the QR code or send email to muse@alibaba-inc.com.
 
+<div style="display: flex; justify-content: space-between;">
+    <img src="assets/weixin.jpg" alt="weixin" style="zoom: 33%;" />
+    <img src="assets/dingtalk.png" alt="dingtalk" style="zoom: 60%;" />
+</div>
 
 ## Citation
+
 If you use this codebase, or otherwise found our work valuable, please cite:
 
 ```bibtex
