@@ -42,15 +42,17 @@ class VAEStateDictConverter(StateDictConverter):
             if self.has_encoder and self.has_decoder:
                 new_state_dict[key] = param
             elif self.has_encoder and key.startswith("encoder."):
-                new_state_dict[key[len("encoder."):]] = param
+                new_state_dict[key[len("encoder.") :]] = param
             elif self.has_decoder and key.startswith("decoder."):
-                new_state_dict[key[len("decoder."):]] = param
+                new_state_dict[key[len("decoder.") :]] = param
         return new_state_dict
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         assert self.has_decoder or self.has_encoder, "Either decoder or encoder must be present"
-        if "first_stage_model.decoder.conv_in.weight" in state_dict or \
-                "first_stage_model.encoder.conv_in.weight" in state_dict:
+        if (
+            "first_stage_model.decoder.conv_in.weight" in state_dict
+            or "first_stage_model.encoder.conv_in.weight" in state_dict
+        ):
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
         else:
@@ -59,28 +61,40 @@ class VAEStateDictConverter(StateDictConverter):
 
 
 class VAEAttentionBlock(nn.Module):
-    def __init__(self, num_attention_heads, attention_head_dim, in_channels, num_layers=1, norm_num_groups=32, eps=1e-5,
-                 device: str = 'cuda:0', dtype: torch.dtype = torch.float32):
+    def __init__(
+        self,
+        num_attention_heads,
+        attention_head_dim,
+        in_channels,
+        num_layers=1,
+        norm_num_groups=32,
+        eps=1e-5,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
         inner_dim = num_attention_heads * attention_head_dim
 
-        self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True,
-                                 device=device, dtype=dtype)
+        self.norm = nn.GroupNorm(
+            num_groups=norm_num_groups, num_channels=in_channels, eps=eps, affine=True, device=device, dtype=dtype
+        )
 
-        self.transformer_blocks = nn.ModuleList([
-            Attention(
-                inner_dim,
-                num_attention_heads,
-                attention_head_dim,
-                bias_q=True,
-                bias_kv=True,
-                bias_out=True,
-                attn_implementation="xformers",
-                device=device,
-                dtype=dtype
-            )
-            for d in range(num_layers)
-        ])
+        self.transformer_blocks = nn.ModuleList(
+            [
+                Attention(
+                    inner_dim,
+                    num_attention_heads,
+                    attention_head_dim,
+                    bias_q=True,
+                    bias_kv=True,
+                    bias_out=True,
+                    attn_implementation="xformers",
+                    device=device,
+                    dtype=dtype,
+                )
+                for d in range(num_layers)
+            ]
+        )
 
     def forward(self, hidden_states, time_emb, text_emb, res_stack):
         batch, _, height, width = hidden_states.shape
@@ -102,49 +116,53 @@ class VAEAttentionBlock(nn.Module):
 class VAEDecoder(PreTrainedModel):
     converter = VAEStateDictConverter(has_decoder=True)
 
-    def __init__(self,
-                 latent_channels: int = 4,
-                 scaling_factor: float = 0.18215,
-                 shift_factor: float = 0,
-                 use_post_quant_conv: bool = True,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float32
-                 ):
+    def __init__(
+        self,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_post_quant_conv: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
         self.latent_channels = latent_channels
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_post_quant_conv = use_post_quant_conv
         if use_post_quant_conv:
-            self.post_quant_conv = nn.Conv2d(latent_channels, latent_channels, kernel_size=1,
-                                             device=device, dtype=dtype)
+            self.post_quant_conv = nn.Conv2d(
+                latent_channels, latent_channels, kernel_size=1, device=device, dtype=dtype
+            )
         self.conv_in = nn.Conv2d(latent_channels, 512, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.blocks = nn.ModuleList([
-            # UNetMidBlock2D
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            # UpDecoderBlock2D
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(512, device=device, dtype=dtype),
-            # UpDecoderBlock2D
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(512, device=device, dtype=dtype),
-            # UpDecoderBlock2D
-            ResnetBlock(512, 256, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
-            UpSampler(256, device=device, dtype=dtype),
-            # UpDecoderBlock2D
-            ResnetBlock(256, 128, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                # UNetMidBlock2D
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                # UpDecoderBlock2D
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                UpSampler(512, device=device, dtype=dtype),
+                # UpDecoderBlock2D
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                UpSampler(512, device=device, dtype=dtype),
+                # UpDecoderBlock2D
+                ResnetBlock(512, 256, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
+                UpSampler(256, device=device, dtype=dtype),
+                # UpDecoderBlock2D
+                ResnetBlock(256, 128, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
+            ]
+        )
 
         self.conv_norm_out = nn.GroupNorm(num_channels=128, num_groups=32, eps=1e-6, device=device, dtype=dtype)
         self.conv_act = nn.SiLU()
@@ -157,7 +175,7 @@ class VAEDecoder(PreTrainedModel):
             tile_size,
             tile_stride,
             tile_device=sample.device,
-            tile_dtype=sample.dtype
+            tile_dtype=sample.dtype,
         )
         return hidden_states
 
@@ -190,15 +208,16 @@ class VAEDecoder(PreTrainedModel):
         return hidden_states
 
     @classmethod
-    def from_state_dict(cls,
-                        state_dict: Dict[str, torch.Tensor],
-                        device: str,
-                        dtype: torch.dtype,
-                        latent_channels: int = 4,
-                        scaling_factor: float = 0.18215,
-                        shift_factor: float = 0,
-                        use_post_quant_conv: bool = True,
-                        ):
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_post_quant_conv: bool = True,
+    ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
                 cls,
@@ -207,7 +226,7 @@ class VAEDecoder(PreTrainedModel):
                 shift_factor=shift_factor,
                 use_post_quant_conv=use_post_quant_conv,
                 device=device,
-                dtype=dtype
+                dtype=dtype,
             )
         model.load_state_dict(state_dict)
         return model
@@ -220,45 +239,49 @@ class VAEDecoder(PreTrainedModel):
 class VAEEncoder(PreTrainedModel):
     converter = VAEStateDictConverter(has_encoder=True)
 
-    def __init__(self,
-                 latent_channels: int = 4,
-                 scaling_factor: float = 0.18215,
-                 shift_factor: float = 0,
-                 use_quant_conv: bool = True,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float32
-                 ):
+    def __init__(
+        self,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_quant_conv: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
         self.latent_channels = latent_channels
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
         self.use_quant_conv = use_quant_conv
         if use_quant_conv:
-            self.quant_conv = nn.Conv2d(2 * latent_channels, 2 * latent_channels, kernel_size=1,
-                                        device=device, dtype=dtype)
+            self.quant_conv = nn.Conv2d(
+                2 * latent_channels, 2 * latent_channels, kernel_size=1, device=device, dtype=dtype
+            )
         self.conv_in = nn.Conv2d(3, 128, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-        self.blocks = nn.ModuleList([
-            # DownEncoderBlock2D
-            ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
-            DownSampler(128, padding=0, extra_padding=True, device=device, dtype=dtype),
-            # DownEncoderBlock2D
-            ResnetBlock(128, 256, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
-            DownSampler(256, padding=0, extra_padding=True, device=device, dtype=dtype),
-            # DownEncoderBlock2D
-            ResnetBlock(256, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            DownSampler(512, padding=0, extra_padding=True, device=device, dtype=dtype),
-            # DownEncoderBlock2D
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            # UNetMidBlock2D
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-            VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
-            ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                # DownEncoderBlock2D
+                ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(128, 128, eps=1e-6, device=device, dtype=dtype),
+                DownSampler(128, padding=0, extra_padding=True, device=device, dtype=dtype),
+                # DownEncoderBlock2D
+                ResnetBlock(128, 256, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(256, 256, eps=1e-6, device=device, dtype=dtype),
+                DownSampler(256, padding=0, extra_padding=True, device=device, dtype=dtype),
+                # DownEncoderBlock2D
+                ResnetBlock(256, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                DownSampler(512, padding=0, extra_padding=True, device=device, dtype=dtype),
+                # DownEncoderBlock2D
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                # UNetMidBlock2D
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+                VAEAttentionBlock(1, 512, 512, 1, eps=1e-6, device=device, dtype=dtype),
+                ResnetBlock(512, 512, eps=1e-6, device=device, dtype=dtype),
+            ]
+        )
 
         self.conv_norm_out = nn.GroupNorm(num_channels=512, num_groups=32, eps=1e-6, device=device, dtype=dtype)
         self.conv_act = nn.SiLU()
@@ -271,7 +294,7 @@ class VAEEncoder(PreTrainedModel):
             tile_size,
             tile_stride,
             tile_device=sample.device,
-            tile_dtype=sample.dtype
+            tile_dtype=sample.dtype,
         )
         return hidden_states
 
@@ -298,7 +321,7 @@ class VAEEncoder(PreTrainedModel):
         hidden_states = self.conv_out(hidden_states)
         if self.use_quant_conv:
             hidden_states = self.quant_conv(hidden_states)
-        hidden_states = hidden_states[:, :self.latent_channels]
+        hidden_states = hidden_states[:, : self.latent_channels]
         hidden_states = (hidden_states - self.shift_factor) * self.scaling_factor
         hidden_states = hidden_states.to(original_dtype)
         return hidden_states
@@ -320,15 +343,16 @@ class VAEEncoder(PreTrainedModel):
         return hidden_states
 
     @classmethod
-    def from_state_dict(cls,
-                        state_dict: Dict[str, torch.Tensor],
-                        device: str,
-                        dtype: torch.dtype,
-                        latent_channels: int = 4,
-                        scaling_factor: float = 0.18215,
-                        shift_factor: float = 0,
-                        use_quant_conv: bool = True,
-                        ):
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_quant_conv: bool = True,
+    ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
                 cls,
@@ -337,7 +361,7 @@ class VAEEncoder(PreTrainedModel):
                 shift_factor=shift_factor,
                 use_quant_conv=use_quant_conv,
                 device=device,
-                dtype=dtype
+                dtype=dtype,
             )
         model.load_state_dict(state_dict)
         return model
@@ -350,21 +374,33 @@ class VAEEncoder(PreTrainedModel):
 class VAE(PreTrainedModel):
     converter = VAEStateDictConverter(has_encoder=True, has_decoder=True)
 
-    def __init__(self,
-                 latent_channels: int = 4,
-                 scaling_factor: float = 0.18215,
-                 shift_factor: float = 0,
-                 use_quant_conv: bool = True,
-                 use_post_quant_conv: bool = True,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float32
-                 ):
+    def __init__(
+        self,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_quant_conv: bool = True,
+        use_post_quant_conv: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
-        self.encoder = VAEEncoder(latent_channels=latent_channels, scaling_factor=scaling_factor,
-                                  shift_factor=shift_factor, use_quant_conv=use_quant_conv, device=device, dtype=dtype)
-        self.decoder = VAEDecoder(latent_channels=latent_channels, scaling_factor=scaling_factor,
-                                  shift_factor=shift_factor, use_post_quant_conv=use_post_quant_conv,
-                                  device=device, dtype=dtype)
+        self.encoder = VAEEncoder(
+            latent_channels=latent_channels,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+            use_quant_conv=use_quant_conv,
+            device=device,
+            dtype=dtype,
+        )
+        self.decoder = VAEDecoder(
+            latent_channels=latent_channels,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+            use_post_quant_conv=use_post_quant_conv,
+            device=device,
+            dtype=dtype,
+        )
 
     def encode(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         return self.encoder(sample, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, **kwargs)
@@ -373,16 +409,17 @@ class VAE(PreTrainedModel):
         return self.decoder(sample, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, **kwargs)
 
     @classmethod
-    def from_state_dict(cls,
-                        state_dict: Dict[str, torch.Tensor],
-                        device: str,
-                        dtype: torch.dtype,
-                        latent_channels: int = 4,
-                        scaling_factor: float = 0.18215,
-                        shift_factor: float = 0,
-                        use_quant_conv: bool = True,
-                        use_post_quant_conv: bool = True,
-                        ):
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        latent_channels: int = 4,
+        scaling_factor: float = 0.18215,
+        shift_factor: float = 0,
+        use_quant_conv: bool = True,
+        use_post_quant_conv: bool = True,
+    ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
                 cls,
@@ -392,7 +429,7 @@ class VAE(PreTrainedModel):
                 use_quant_conv=use_quant_conv,
                 use_post_quant_conv=use_post_quant_conv,
                 device=device,
-                dtype=dtype
+                dtype=dtype,
             )
         model.load_state_dict(state_dict)
         return model

@@ -62,8 +62,16 @@ class SDTextEncoderStateDictConverter(StateDictConverter):
 class SDTextEncoder(PreTrainedModel):
     converter = SDTextEncoderStateDictConverter()
 
-    def __init__(self, embed_dim=768, vocab_size=49408, max_position_embeddings=77, num_encoder_layers=12,
-                 encoder_intermediate_size=3072, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        embed_dim=768,
+        vocab_size=49408,
+        max_position_embeddings=77,
+        num_encoder_layers=12,
+        encoder_intermediate_size=3072,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
 
         # token_embedding
@@ -71,12 +79,16 @@ class SDTextEncoder(PreTrainedModel):
 
         # position_embeds (This is a fixed tensor)
         self.position_embeds = nn.Parameter(
-            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype))
+            torch.zeros(1, max_position_embeddings, embed_dim, device=device, dtype=dtype)
+        )
 
         # encoders
         self.encoders = nn.ModuleList(
-            [CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype)
-             for _ in range(num_encoder_layers)])
+            [
+                CLIPEncoderLayer(embed_dim, encoder_intermediate_size, device=device, dtype=dtype)
+                for _ in range(num_encoder_layers)
+            ]
+        )
 
         # attn_mask
         self.attn_mask = self.attention_mask(max_position_embeddings)
@@ -91,7 +103,7 @@ class SDTextEncoder(PreTrainedModel):
         return mask
 
     def forward(self, input_ids, clip_skip=1):
-        clip_skip = max(clip_skip, 1)        
+        clip_skip = max(clip_skip, 1)
         embeds = self.token_embedding(input_ids) + self.position_embeds
         attn_mask = self.attn_mask.to(device=embeds.device, dtype=embeds.dtype)
 
@@ -104,20 +116,26 @@ class SDTextEncoder(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-            cls,
-            state_dict: Dict[str, torch.Tensor],
-            device: str,
-            dtype: torch.dtype,
-            embed_dim: int = 768,
-            vocab_size: int = 49408,
-            max_position_embeddings: int = 77,
-            num_encoder_layers: int = 12,
-            encoder_intermediate_size: int = 3072,
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        embed_dim: int = 768,
+        vocab_size: int = 49408,
+        max_position_embeddings: int = 77,
+        num_encoder_layers: int = 12,
+        encoder_intermediate_size: int = 3072,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, embed_dim=embed_dim,
-                                             vocab_size=vocab_size, max_position_embeddings=max_position_embeddings,
-                                             num_encoder_layers=num_encoder_layers,
-                                             encoder_intermediate_size=encoder_intermediate_size)
+            model = torch.nn.utils.skip_init(
+                cls,
+                device=device,
+                dtype=dtype,
+                embed_dim=embed_dim,
+                vocab_size=vocab_size,
+                max_position_embeddings=max_position_embeddings,
+                num_encoder_layers=num_encoder_layers,
+                encoder_intermediate_size=encoder_intermediate_size,
+            )
         model.load_state_dict(state_dict)
         return model

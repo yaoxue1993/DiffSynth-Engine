@@ -1,5 +1,4 @@
 import torch
-import math
 
 from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zero
 from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import RecifitedFlowScheduler
@@ -16,9 +15,9 @@ class RecifitedFlowDDIMScheduler(RecifitedFlowScheduler):
         ss = max(len(inner_sigmas) // num_inference_steps, 1)
         for i in range(1, len(inner_sigmas), ss):
             sigmas.append(float(inner_sigmas[i]))
-        sigmas = sigmas[::-1] 
-        sigmas = torch.FloatTensor(sigmas)   
-        
+        sigmas = sigmas[::-1]
+        sigmas = torch.FloatTensor(sigmas)
+
         timesteps = self._sigma_to_t(sigmas)
         sigmas = append_zero(sigmas)
 

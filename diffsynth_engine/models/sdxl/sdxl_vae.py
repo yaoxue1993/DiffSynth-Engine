@@ -6,14 +6,9 @@ from diffsynth_engine.models.utils import no_init_weights
 
 
 class SDXLVAEEncoder(VAEEncoder):
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float32):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
         super().__init__(
-            latent_channels=4,
-            scaling_factor=0.13025,
-            shift_factor=0,
-            use_quant_conv=True,
-            device=device,
-            dtype=dtype
+            latent_channels=4, scaling_factor=0.13025, shift_factor=0, use_quant_conv=True, device=device, dtype=dtype
         )
 
     @classmethod
@@ -25,14 +20,14 @@ class SDXLVAEEncoder(VAEEncoder):
 
 
 class SDXLVAEDecoder(VAEDecoder):
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float32):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
         super().__init__(
             latent_channels=4,
             scaling_factor=0.13025,
             shift_factor=0,
             use_post_quant_conv=True,
             device=device,
-            dtype=dtype
+            dtype=dtype,
         )
 
     @classmethod

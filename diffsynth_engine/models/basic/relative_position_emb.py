@@ -19,9 +19,9 @@ def _relative_position_bucket(relative_position, bidirectional=True, num_buckets
 
     # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
     relative_position_if_large = max_exact + (
-            torch.log(relative_position.float() / max_exact)
-            / math.log(max_distance / max_exact)
-            * (num_buckets - max_exact)
+        torch.log(relative_position.float() / max_exact)
+        / math.log(max_distance / max_exact)
+        * (num_buckets - max_exact)
     ).to(torch.long)
     relative_position_if_large = torch.min(
         relative_position_if_large, torch.full_like(relative_position_if_large, num_buckets - 1)
@@ -32,8 +32,9 @@ def _relative_position_bucket(relative_position, bidirectional=True, num_buckets
 
 
 class RelativePositionEmbedding(nn.Module):
-    def __init__(self, num_buckets, max_distance, num_heads, device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16):
+    def __init__(
+        self, num_buckets, max_distance, num_heads, device: str = "cuda:0", dtype: torch.dtype = torch.float16
+    ):
         super().__init__()
         self.num_buckets = num_buckets
         self.max_distance = max_distance

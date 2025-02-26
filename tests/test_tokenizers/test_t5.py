@@ -6,7 +6,6 @@ from tests.common.test_case import TestCase
 
 
 class TestT5TokenizerFast(TestCase):
-
     @classmethod
     def setUpClass(cls):
         cls.tokenizer = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
@@ -15,14 +14,33 @@ class TestT5TokenizerFast(TestCase):
         cases = [
             {
                 "texts": "Hello, World!",
-                "expected": ['▁Hello', ',', '▁World', '!', '</s>'],
+                "expected": ["▁Hello", ",", "▁World", "!", "</s>"],
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
-                "expected": [['▁Hello', ',', '▁World', '!', '</s>'],
-                             ['▁D', 'iff', 'S', 'y', 'n', 'th', '-', 'Engine', '▁developed', '▁by', '▁Mus', 'e', '▁AI',
-                              '+', 'Model', 'scope', '</s>']],
-            }
+                "expected": [
+                    ["▁Hello", ",", "▁World", "!", "</s>"],
+                    [
+                        "▁D",
+                        "iff",
+                        "S",
+                        "y",
+                        "n",
+                        "th",
+                        "-",
+                        "Engine",
+                        "▁developed",
+                        "▁by",
+                        "▁Mus",
+                        "e",
+                        "▁AI",
+                        "+",
+                        "Model",
+                        "scope",
+                        "</s>",
+                    ],
+                ],
+            },
         ]
 
         for case in cases:
@@ -38,9 +56,11 @@ class TestT5TokenizerFast(TestCase):
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
-                "expected": [[8774, 6, 1150, 55, 1],
-                             [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]],
-            }
+                "expected": [
+                    [8774, 6, 1150, 55, 1],
+                    [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1],
+                ],
+            },
         ]
 
         for case in cases:
@@ -64,11 +84,13 @@ class TestT5TokenizerFast(TestCase):
                 "kwargs": {"skip_special_tokens": False},
             },
             {
-                "ids": [[8774, 6, 1150, 55, 1],
-                        [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]],
+                "ids": [
+                    [8774, 6, 1150, 55, 1],
+                    [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1],
+                ],
                 "expected": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "kwargs": {"skip_special_tokens": True},
-            }
+            },
         ]
 
         for case in cases:
@@ -90,24 +112,27 @@ class TestT5TokenizerFast(TestCase):
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "expected": torch.tensor(
-                    [[8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                     [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1]]),
+                    [
+                        [8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                        [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 57, 6887, 15, 7833, 1220, 24663, 11911, 1],
+                    ]
+                ),
                 "shape": (2, 512),
                 "kwargs": {},
             },
             {
                 "texts": ["Hello, World!", "DiffSynth-Engine developed by Muse AI+Modelscope"],
                 "expected": torch.tensor(
-                    [[8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0],
-                     [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 1]]),
+                    [[8774, 6, 1150, 55, 1, 0, 0, 0, 0, 0], [309, 5982, 134, 63, 29, 189, 18, 31477, 1597, 1]]
+                ),
                 "shape": (2, 10),
                 "kwargs": {"max_length": 10},
-            }
+            },
         ]
 
         for case in cases:
             texts, expected, shape, kwargs = case["texts"], case["expected"], case["shape"], case["kwargs"]
             result = self.tokenizer(texts, **kwargs)["input_ids"]
             self.assertEqual(shape, result.shape)
-            truncated = result[:, :expected.shape[1]]
+            truncated = result[:, : expected.shape[1]]
             self.assertTrue(torch.equal(expected, truncated))

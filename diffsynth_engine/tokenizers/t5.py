@@ -7,10 +7,7 @@ from tokenizers import Tokenizer as TokenizerFast
 from diffsynth_engine.tokenizers.base import BaseTokenizer, TOKENIZER_CONFIG_FILE
 
 
-VOCAB_FILES_NAMES = {
-    "vocab_file": "spiece.model",
-    "tokenizer_file": "tokenizer.json"
-}
+VOCAB_FILES_NAMES = {"vocab_file": "spiece.model", "tokenizer_file": "tokenizer.json"}
 
 T5_DEFAULT_MAX_LENGTH = 512
 
@@ -49,13 +46,13 @@ class T5TokenizerFast(BaseTokenizer):
     prefix_tokens: List[int] = []
 
     def __init__(
-            self,
-            vocab_file=None,
-            tokenizer_file=None,
-            eos_token="</s>",
-            unk_token="<unk>",
-            pad_token="<pad>",
-            **kwargs,
+        self,
+        vocab_file=None,
+        tokenizer_file=None,
+        eos_token="</s>",
+        unk_token="<unk>",
+        pad_token="<pad>",
+        **kwargs,
     ):
         super().__init__(
             eos_token=eos_token,
@@ -78,8 +75,8 @@ class T5TokenizerFast(BaseTokenizer):
         with open(tokenizer_config_file, encoding="utf-8") as tokenizer_config_handle:
             init_kwargs = json.load(tokenizer_config_handle)
             init_kwargs.update(**kwargs)
-        vocab_file = os.path.join(pretrained_model_path, cls.vocab_files_names['vocab_file'])
-        tokenizer_file = os.path.join(pretrained_model_path, cls.vocab_files_names['tokenizer_file'])
+        vocab_file = os.path.join(pretrained_model_path, cls.vocab_files_names["vocab_file"])
+        tokenizer_file = os.path.join(pretrained_model_path, cls.vocab_files_names["tokenizer_file"])
         return cls(vocab_file=vocab_file, tokenizer_file=tokenizer_file, **init_kwargs)
 
     @property
@@ -105,7 +102,9 @@ class T5TokenizerFast(BaseTokenizer):
         encodings = self._tokenizer.encode_batch(texts, add_special_tokens=True)
         return [encoding.ids for encoding in encodings]
 
-    def decode(self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> str:
+    def decode(
+        self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> str:
         text = self._tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
 
         clean_up_tokenization_spaces = (
@@ -117,7 +116,9 @@ class T5TokenizerFast(BaseTokenizer):
             text = self.clean_up_tokenization(text)
         return text
 
-    def batch_decode(self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> List[str]:
+    def batch_decode(
+        self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> List[str]:
         texts = self._tokenizer.decode_batch(ids, skip_special_tokens=skip_special_tokens)
 
         clean_up_tokenization_spaces = (
@@ -137,7 +138,9 @@ class T5TokenizerFast(BaseTokenizer):
         ids = [self._tokenizer.token_to_id(token) for token in tokens]
         return [index if index is not None else self._tokenizer.token_to_id(self.unk_token) for index in ids]
 
-    def convert_ids_to_tokens(self, ids: Union[int, List[int]], skip_special_tokens: bool = False) -> Union[str, List[str]]:
+    def convert_ids_to_tokens(
+        self, ids: Union[int, List[int]], skip_special_tokens: bool = False
+    ) -> Union[str, List[str]]:
         if isinstance(ids, int):
             return self._tokenizer.id_to_token(ids)
 
@@ -151,11 +154,12 @@ class T5TokenizerFast(BaseTokenizer):
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
         return self._tokenizer.decode(tokens)
 
-    def __call__(self,
-                 texts: Union[str, List[str]],
-                 max_length: Optional[int] = None,
-                 **kwargs,
-                 ) -> Dict[str, "torch.Tensor"]:
+    def __call__(
+        self,
+        texts: Union[str, List[str]],
+        max_length: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, "torch.Tensor"]:
         """
         Tokenize text and prepare for model inputs.
 
@@ -184,7 +188,7 @@ class T5TokenizerFast(BaseTokenizer):
             if len(ids) > max_length:
                 ids = ids[:max_length]
                 ids[-1] = self.eos_token_id
-            encoded[i, :len(ids)] = torch.tensor(ids)
-            attention_mask[i, :len(ids)] = torch.ones((1, len(ids)))
+            encoded[i, : len(ids)] = torch.tensor(ids)
+            attention_mask[i, : len(ids)] = torch.ones((1, len(ids)))
 
         return {"input_ids": encoded, "attention_mask": attention_mask}

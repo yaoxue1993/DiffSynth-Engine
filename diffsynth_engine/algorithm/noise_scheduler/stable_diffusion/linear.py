@@ -1,5 +1,7 @@
 import torch
-from ..base_scheduler import append_zero, BaseScheduler
+
+from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import BaseScheduler, append_zero
+
 
 def linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, num_train_steps: int = 1000):
     """
@@ -9,10 +11,10 @@ def linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, 
 
 
 def scaled_linear_beta_schedule(beta_start: float = 0.00085, beta_end: float = 0.0120, num_train_steps: int = 1000):
-    """ 
+    """
     Stable Diffusion Schedule
     """
-    return torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_train_steps) ** 2
+    return torch.linspace(beta_start**0.5, beta_end**0.5, num_train_steps) ** 2
 
 
 class ScaledLinearScheduler(BaseScheduler):
@@ -34,9 +36,10 @@ class ScaledLinearScheduler(BaseScheduler):
 
     def get_sigmas(self):
         # Stable Diffusion Sigmas
-        # len(sigmas) == 1000, sigma_min=sigmas[0] == 0.0292, sigma_max=sigmas[-1] == 14.6146                
-        betas = scaled_linear_beta_schedule(beta_start=self.beta_start, beta_end=self.beta_end,
-                                            num_train_steps=self.num_train_steps)
+        # len(sigmas) == 1000, sigma_min=sigmas[0] == 0.0292, sigma_max=sigmas[-1] == 14.6146
+        betas = scaled_linear_beta_schedule(
+            beta_start=self.beta_start, beta_end=self.beta_end, num_train_steps=self.num_train_steps
+        )
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
         sigmas = ((1 - alphas_cumprod) / alphas_cumprod) ** 0.5

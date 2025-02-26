@@ -14,6 +14,6 @@ __all__ = [
     "DPMSolverPlusPlus2MSampler",
     "DPMSolverPlusPlus2MSDESampler",
     "DPMSolverPlusPlus3MSDESampler",
-    "DEISSampler",    
-    "FlowMatchEulerSampler"
+    "DEISSampler",
+    "FlowMatchEulerSampler",
 ]

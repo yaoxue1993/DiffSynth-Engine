@@ -1,14 +1,16 @@
-from .epsilon import EpsilonSampler
 import torch
 
+from diffsynth_engine.algorithm.sampler.stable_diffusion.epsilon import EpsilonSampler
+
+
 class EulerAncestralSampler(EpsilonSampler):
-    def initialize(self, init_latents, timesteps, sigmas, mask):  
+    def initialize(self, init_latents, timesteps, sigmas, mask):
         super().initialize(init_latents, timesteps, sigmas, mask)
         self.eta = 1.0
-    
-    def _get_ancestral_step(self, sigma_from, sigma_to, eta=1.):
-        sigma_up = min(sigma_to, eta * (sigma_to ** 2 * (sigma_from ** 2 - sigma_to ** 2) / sigma_from ** 2) ** 0.5)
-        sigma_down = (sigma_to ** 2 - sigma_up ** 2) ** 0.5
+
+    def _get_ancestral_step(self, sigma_from, sigma_to, eta=1.0):
+        sigma_up = min(sigma_to, eta * (sigma_to**2 * (sigma_from**2 - sigma_to**2) / sigma_from**2) ** 0.5)
+        sigma_down = (sigma_to**2 - sigma_up**2) ** 0.5
         return sigma_down, sigma_up
 
     def step(self, latents, model_outputs, i):

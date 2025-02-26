@@ -1,14 +1,15 @@
 import torch
 import torchsde
 
+
 class BatchedBrownianTree:
     """A wrapper around torchsde.BrownianTree that enables batches of entropy."""
 
     def __init__(self, x, t0, t1, seed=None, **kwargs):
         t0, t1, self.sign = self.sort(t0, t1)
-        w0 = kwargs.get('w0', torch.zeros_like(x))
+        w0 = kwargs.get("w0", torch.zeros_like(x))
         if seed is None:
-            seed = torch.randint(0, 2 ** 63 - 1, []).item()
+            seed = torch.randint(0, 2**63 - 1, []).item()
         self.batched = True
         try:
             assert len(seed) == x.shape[0]

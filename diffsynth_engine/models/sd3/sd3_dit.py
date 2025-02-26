@@ -32,7 +32,7 @@ class SD3DiTStateDictConverter(StateDictConverter):
                 state_dict_[rename_dict[name]] = param
             elif name.endswith(".weight") or name.endswith(".bias"):
                 suffix = ".weight" if name.endswith(".weight") else ".bias"
-                prefix = name[:-len(suffix)]
+                prefix = name[: -len(suffix)]
                 if prefix in rename_dict:
                     state_dict_[rename_dict[prefix] + suffix] = param
                 elif prefix.startswith("transformer_blocks."):
@@ -76,23 +76,32 @@ class SD3DiTStateDictConverter(StateDictConverter):
 
 
 class PatchEmbed(nn.Module):
-    def __init__(self, patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192,
-                 device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        patch_size=2,
+        in_channels=16,
+        embed_dim=1536,
+        pos_embed_max_size=192,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
         self.pos_embed_max_size = pos_embed_max_size
         self.patch_size = patch_size
 
-        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=(patch_size, patch_size), stride=patch_size,
-                              device=device, dtype=dtype)
+        self.proj = nn.Conv2d(
+            in_channels, embed_dim, kernel_size=(patch_size, patch_size), stride=patch_size, device=device, dtype=dtype
+        )
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, self.pos_embed_max_size, self.pos_embed_max_size, 1536, device=device, dtype=dtype))
+            torch.zeros(1, self.pos_embed_max_size, self.pos_embed_max_size, 1536, device=device, dtype=dtype)
+        )
 
     def cropped_pos_embed(self, height, width):
         height = height // self.patch_size
         width = width // self.patch_size
         top = (self.pos_embed_max_size - height) // 2
         left = (self.pos_embed_max_size - width) // 2
-        spatial_pos_embed = self.pos_embed[:, top: top + height, left: left + width, :].flatten(1, 2)
+        spatial_pos_embed = self.pos_embed[:, top : top + height, left : left + width, :].flatten(1, 2)
         return spatial_pos_embed
 
     def forward(self, latent):
@@ -104,8 +113,16 @@ class PatchEmbed(nn.Module):
 
 
 class JointAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        dim_a,
+        dim_b,
+        num_heads,
+        head_dim,
+        only_out_a=False,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -128,8 +145,10 @@ class JointAttention(nn.Module):
         hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
-        hidden_states_a, hidden_states_b = hidden_states[:, :hidden_states_a.shape[1]], hidden_states[:,
-                                                                                        hidden_states_a.shape[1]:]
+        hidden_states_a, hidden_states_b = (
+            hidden_states[:, : hidden_states_a.shape[1]],
+            hidden_states[:, hidden_states_a.shape[1] :],
+        )
         hidden_states_a = self.a_to_out(hidden_states_a)
         if self.only_out_a:
             return hidden_states_a
@@ -139,26 +158,27 @@ class JointAttention(nn.Module):
 
 
 class JointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
-        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads,
-                                   device=device, dtype=dtype)
+        self.attn = JointAttention(
+            dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype
+        )
 
         self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
         self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
     def forward(self, hidden_states_a, hidden_states_b, temb):
@@ -182,19 +202,20 @@ class JointTransformerBlock(nn.Module):
 
 
 class JointTransformerFinalBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, single=True, device=device, dtype=dtype)
 
-        self.attn = JointAttention(dim, dim, num_attention_heads, dim // num_attention_heads, only_out_a=True,
-                                   device=device, dtype=dtype)
+        self.attn = JointAttention(
+            dim, dim, num_attention_heads, dim // num_attention_heads, only_out_a=True, device=device, dtype=dtype
+        )
 
         self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
     def forward(self, hidden_states_a, hidden_states_b, temb):
@@ -215,17 +236,22 @@ class JointTransformerFinalBlock(nn.Module):
 class SD3DiT(PreTrainedModel):
     converter = SD3DiTStateDictConverter()
 
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
-        self.pos_embedder = PatchEmbed(patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192, device=device, dtype=dtype)
+        self.pos_embedder = PatchEmbed(
+            patch_size=2, in_channels=16, embed_dim=1536, pos_embed_max_size=192, device=device, dtype=dtype
+        )
         self.time_embedder = TimestepEmbeddings(256, 1536, device=device, dtype=dtype)
-        self.pooled_text_embedder = nn.Sequential(nn.Linear(2048, 1536, device=device, dtype=dtype),
-                                                  nn.SiLU(),
-                                                  nn.Linear(1536, 1536, device=device, dtype=dtype))
+        self.pooled_text_embedder = nn.Sequential(
+            nn.Linear(2048, 1536, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(1536, 1536, device=device, dtype=dtype),
+        )
         self.context_embedder = nn.Linear(4096, 1536, device=device, dtype=dtype)
         self.blocks = nn.ModuleList(
-            [JointTransformerBlock(1536, 24, device=device, dtype=dtype) for _ in range(23)] + \
-            [JointTransformerFinalBlock(1536, 24, device=device, dtype=dtype)])
+            [JointTransformerBlock(1536, 24, device=device, dtype=dtype) for _ in range(23)]
+            + [JointTransformerFinalBlock(1536, 24, device=device, dtype=dtype)]
+        )
         self.norm_out = AdaLayerNorm(1536, single=True, device=device, dtype=dtype)
         self.proj_out = nn.Linear(1536, 64, device=device, dtype=dtype)
 
@@ -237,12 +263,21 @@ class SD3DiT(PreTrainedModel):
             tile_size,
             tile_stride,
             tile_device=hidden_states.device,
-            tile_dtype=hidden_states.dtype
+            tile_dtype=hidden_states.dtype,
         )
         return hidden_states
 
-    def forward(self, hidden_states, timestep, prompt_emb, pooled_prompt_emb, tiled=False, tile_size=128,
-                tile_stride=64, use_gradient_checkpointing=False):
+    def forward(
+        self,
+        hidden_states,
+        timestep,
+        prompt_emb,
+        pooled_prompt_emb,
+        tiled=False,
+        tile_size=128,
+        tile_stride=64,
+        use_gradient_checkpointing=False,
+    ):
         if tiled:
             return self.tiled_forward(hidden_states, timestep, prompt_emb, pooled_prompt_emb, tile_size, tile_stride)
         conditioning = self.time_embedder(timestep, hidden_states.dtype) + self.pooled_text_embedder(pooled_prompt_emb)
@@ -261,7 +296,9 @@ class SD3DiT(PreTrainedModel):
             if self.training and use_gradient_checkpointing:
                 hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
-                    hidden_states, prompt_emb, conditioning,
+                    hidden_states,
+                    prompt_emb,
+                    conditioning,
                     use_reentrant=False,
                 )
             else:
@@ -269,8 +306,9 @@ class SD3DiT(PreTrainedModel):
 
         hidden_states = self.norm_out(hidden_states, conditioning)
         hidden_states = self.proj_out(hidden_states)
-        hidden_states = rearrange(hidden_states, "B (H W) (P Q C) -> B C (H P) (W Q)", P=2, Q=2, H=height // 2,
-                                  W=width // 2)
+        hidden_states = rearrange(
+            hidden_states, "B (H W) (P Q C) -> B C (H P) (W Q)", P=2, Q=2, H=height // 2, W=width // 2
+        )
         return hidden_states
 
     @classmethod

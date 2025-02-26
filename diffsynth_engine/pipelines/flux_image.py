@@ -178,16 +178,17 @@ def calculate_shift(
 
 @dataclass
 class FluxModelConfig:
-    model_path: str
-    vae_path: Optional[str] = None    
-    t5_path: Optional[str] = None    
-    clip_path: Optional[str] = None
+    dit_path: str | os.PathLike
+    clip_path: Optional[str | os.PathLike] = None
+    t5_path: Optional[str | os.PathLike] = None
+    vae_path: Optional[str | os.PathLike] = None
 
-    vae_dtype: torch.dtype = torch.float32
     dit_dtype: torch.dtype = torch.bfloat16
-    t5_dtype: torch.dtype = torch.bfloat16
     clip_dtype: torch.dtype = torch.bfloat16
-    
+    t5_dtype: torch.dtype = torch.bfloat16
+    vae_dtype: torch.dtype = torch.float32
+
+
 class FluxImagePipeline(BasePipeline):
     lora_converter = FluxLoRAConverter()
 
@@ -218,12 +219,18 @@ class FluxImagePipeline(BasePipeline):
         self.vae_encoder = vae_encoder
         self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
-        self.model_names = ["text_encoder_1", "text_encoder_2", "dit", "vae_decoder", "vae_encoder"]
+        self.model_names = [
+            "text_encoder_1",
+            "text_encoder_2",
+            "dit",
+            "vae_decoder",
+            "vae_encoder",
+        ]
 
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | FluxModelConfig ,
+        model_path_or_config: str | os.PathLike | FluxModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = False,
@@ -231,25 +238,40 @@ class FluxImagePipeline(BasePipeline):
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
-        if isinstance(pretrained_model_paths, str):
-            model_config = FluxModelConfig(model_path=pretrained_model_paths, dit_dtype=dtype, t5_dtype=dtype, clip_dtype=dtype)
-        else:
-            model_config = pretrained_model_paths
-        
+        model_config = (
+            model_path_or_config
+            if isinstance(model_path_or_config, FluxModelConfig)
+            else FluxModelConfig(dit_path=model_path_or_config, dit_dtype=dtype, t5_dtype=dtype, clip_dtype=dtype)
+        )
+
         if model_config.clip_path is None:
-            model_config.clip_path = fetch_modelscope_model(model_id="muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors")
+            model_config.clip_path = fetch_modelscope_model(
+                model_id="muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
+            )
         if model_config.t5_path is None:
-            model_config.t5_path = fetch_modelscope_model("muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors")
+            model_config.t5_path = fetch_modelscope_model(
+                "muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors"
+            )
         if model_config.vae_path is None:
-            model_config.vae_path = fetch_modelscope_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
+            model_config.vae_path = fetch_modelscope_model(
+                "muse/flux_vae", revision="20241015120836", path="ae.safetensors"
+            )
 
-        assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"        
-        assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), f"{model_config.clip_path} is not a .safetensors file"
-        assert os.path.isfile(model_config.t5_path) and model_config.t5_path.endswith(".safetensors"), f"{model_config.t5_path} is not a .safetensors file"
-        assert os.path.isfile(model_config.vae_path)
+        assert os.path.isfile(model_config.dit_path) and model_config.dit_path.endswith(".safetensors"), (
+            f"{model_config.dit_path} is not a .safetensors file"
+        )
+        assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), (
+            f"{model_config.clip_path} is not a .safetensors file"
+        )
+        assert os.path.isfile(model_config.t5_path) and model_config.t5_path.endswith(".safetensors"), (
+            f"{model_config.t5_path} is not a .safetensors file"
+        )
+        assert os.path.isfile(model_config.vae_path) and model_config.vae_path.endswith(".safetensors"), (
+            f"{model_config.vae_path} is not a .safetensors file"
+        )
 
-        logger.info(f"loading state dict from {model_config.model_path} ...")
-        dit_state_dict = load_file(model_config.model_path, device="cpu")
+        logger.info(f"loading state dict from {model_config.dit_path} ...")
+        dit_state_dict = load_file(model_config.dit_path, device="cpu")
         logger.info(f"loading state dict from {model_config.clip_path} ...")
         clip_state_dict = load_file(model_config.clip_path, device="cpu")
         logger.info(f"loading state dict from {model_config.t5_path} ...")
@@ -262,8 +284,12 @@ class FluxImagePipeline(BasePipeline):
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             dit = FluxDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype)
-            text_encoder_1 = FluxTextEncoder1.from_state_dict(clip_state_dict, device=init_device, dtype=model_config.clip_dtype)
-        text_encoder_2 = FluxTextEncoder2.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
+            text_encoder_1 = FluxTextEncoder1.from_state_dict(
+                clip_state_dict, device=init_device, dtype=model_config.clip_dtype
+            )
+        text_encoder_2 = FluxTextEncoder2.from_state_dict(
+            t5_state_dict, device=init_device, dtype=model_config.t5_dtype
+        )
         vae_decoder = FluxVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 

@@ -17,6 +17,5 @@ __all__ = [
     "SGMUniformScheduler",
     "RecifitedFlowScheduler",
     "RecifitedFlowDDIMScheduler",
-    "RecifitedFlowBetaScheduler"
+    "RecifitedFlowBetaScheduler",
 ]
-

@@ -4,14 +4,19 @@ import numpy as np
 from typing import Dict, List
 from PIL import Image, ImageOps
 from einops import repeat
+from dataclasses import dataclass
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
 
 
-class BasePipeline:
+@dataclass
+class ModelConfig:
+    pass
 
-    def __init__(self, device='cuda:0', dtype=torch.float16):
+
+class BasePipeline:
+    def __init__(self, device="cuda:0", dtype=torch.float16):
         super().__init__()
         self.device = device
         self.dtype = dtype
@@ -19,14 +24,19 @@ class BasePipeline:
         self.model_names = []
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_path: str | os.PathLike,
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16,
-                        cpu_offload: bool = False) -> "BasePipeline":
+    def from_pretrained(
+        cls,
+        model_path_or_config: str | os.PathLike | ModelConfig,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+        cpu_offload: bool = False,
+    ) -> "BasePipeline":
         raise NotImplementedError()
 
     @classmethod
-    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor],
-                        device: str = 'cuda:0', dtype: torch.dtype = torch.float16) -> "BasePipeline":
+    def from_state_dict(
+        cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
+    ) -> "BasePipeline":
         raise NotImplementedError()
 
     @staticmethod
@@ -34,7 +44,7 @@ class BasePipeline:
         image_array = np.array(image, dtype=np.float32)
         if len(image_array.shape) == 2:
             image_array = image_array[:, :, np.newaxis]
-            
+
         image = torch.Tensor((image_array / 255) * 2 - 1).permute(2, 0, 1).unsqueeze(0)
         return image
 
@@ -63,20 +73,18 @@ class BasePipeline:
         image = self.vae_decoder(latent.to(vae_dtype), tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return image
 
-    def prepare_mask(self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4) -> torch.Tensor:
+    def prepare_mask(
+        self, input_image: Image.Image, mask_image: Image.Image, vae_scale_factor: int = 8, latent_channels=4
+    ) -> torch.Tensor:
         height, width = mask_image.size
         # mask
         mask = torch.Tensor(np.array(mask_image) / 255).unsqueeze(0).unsqueeze(0)
-        mask = torch.nn.functional.interpolate(
-            mask, size=(height // vae_scale_factor, width // vae_scale_factor)
-        )
-        mask = repeat(mask, 'b 1 h w -> b c h w', c=latent_channels)
+        mask = torch.nn.functional.interpolate(mask, size=(height // vae_scale_factor, width // vae_scale_factor))
+        mask = repeat(mask, "b 1 h w -> b c h w", c=latent_channels)
         mask = mask.to(self.device, self.dtype)
         # overlay_image
         overlay_image = Image.new("RGBa", (width, height))
-        overlay_image.paste(
-            input_image.convert("RGBA").convert("RGBa"), mask=ImageOps.invert(mask_image.convert("L"))
-        )
+        overlay_image.paste(input_image.convert("RGBA").convert("RGBa"), mask=ImageOps.invert(mask_image.convert("L")))
         overlay_image = overlay_image.convert("RGBA")
         # mask: [1, 4, H, W]  = mask_image[1, 1, H//8, W//8] * 4
         # overlay_image: [1, 4, H, W]  = mask_image[1, 1, H, W] + input_image[1, 3, H, W]
@@ -88,10 +96,10 @@ class BasePipeline:
             total_steps = num_inference_steps
             sigmas, timesteps = self.noise_scheduler.schedule(total_steps)
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
-            sigma_start, sigmas = sigmas[t_start-1], sigmas[t_start-1:]
-            timesteps = timesteps[t_start-1:]
-            
-            self.load_models_to_device(['vae_encoder'])
+            sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
+            timesteps = timesteps[t_start - 1 :]
+
+            self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
             latents = self.encode_image(image)
@@ -105,7 +113,7 @@ class BasePipeline:
             init_latents = latents.clone()
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
-    
+
     def eval(self):
         for model_name in self.model_names:
             model = getattr(self, model_name)

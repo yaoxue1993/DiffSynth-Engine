@@ -1,12 +1,15 @@
-from .epsilon import EpsilonSampler
-from .brownian_tree import BrownianTreeNoiseSampler
 import torch
+
+from diffsynth_engine.algorithm.sampler.stable_diffusion.epsilon import EpsilonSampler
+from diffsynth_engine.algorithm.sampler.stable_diffusion.brownian_tree import BrownianTreeNoiseSampler
+
+
 class DPMSolverPlusPlus3MSDESampler(EpsilonSampler):
     def initialize(self, init_latents, timesteps, sigmas, mask):
         super().initialize(init_latents, timesteps, sigmas, mask)
         sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
         self.noise_sampler = BrownianTreeNoiseSampler(init_latents, sigma_min, sigma_max)
-        self.denoised_1 = None    
+        self.denoised_1 = None
         self.denoised_2 = None
         self.h_1 = None
         self.h_2 = None
@@ -14,8 +17,8 @@ class DPMSolverPlusPlus3MSDESampler(EpsilonSampler):
         self.s_noise = 1.0
 
     def step(self, latents, model_outputs, i):
-        x = self._scaling(latents, self.sigmas[i])        
-        denoised = self._to_denoised(self.sigmas[i], model_outputs, x)        
+        x = self._scaling(latents, self.sigmas[i])
+        denoised = self._to_denoised(self.sigmas[i], model_outputs, x)
         if self.sigmas[i + 1] == 0:
             # Denoising step
             x = denoised
@@ -43,7 +46,13 @@ class DPMSolverPlusPlus3MSDESampler(EpsilonSampler):
                 x = x + phi_2 * d
 
             if self.eta:
-                x = x + self.noise_sampler(self.sigmas[i], self.sigmas[i + 1]) * self.sigmas[i + 1] * (-2 * h * self.eta).expm1().neg().sqrt() * self.s_noise
+                x = (
+                    x
+                    + self.noise_sampler(self.sigmas[i], self.sigmas[i + 1])
+                    * self.sigmas[i + 1]
+                    * (-2 * h * self.eta).expm1().neg().sqrt()
+                    * self.s_noise
+                )
 
         self.denoised_1, self.denoised_2 = denoised, self.denoised_1
         self.h_1, self.h_2 = h, self.h_1

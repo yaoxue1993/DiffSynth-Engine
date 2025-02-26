@@ -1,5 +1,4 @@
 import torch
-import math
 import numpy as np
 import scipy.stats as stats
 
@@ -20,9 +19,9 @@ class RecifitedFlowBetaScheduler(RecifitedFlowScheduler):
         sigma_max = inner_sigmas[-1]
 
         timesteps = 1 - np.linspace(0, 1, num_inference_steps)
-        timesteps = [stats.beta.ppf(x, self.alpha, self.beta) for x in timesteps] 
-        sigmas = [sigma_min + (x * (sigma_max-sigma_min)) for x in timesteps]
+        timesteps = [stats.beta.ppf(x, self.alpha, self.beta) for x in timesteps]
+        sigmas = [sigma_min + (x * (sigma_max - sigma_min)) for x in timesteps]
         sigmas = torch.FloatTensor(sigmas)
-        timesteps = self._sigma_to_t(sigmas)        
+        timesteps = self._sigma_to_t(sigmas)
         sigmas = append_zero(sigmas)
         return sigmas, timesteps

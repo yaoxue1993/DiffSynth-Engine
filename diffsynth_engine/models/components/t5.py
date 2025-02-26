@@ -13,7 +13,7 @@ logger = logging.get_logger(__name__)
 
 class T5FeedForward(nn.Module):
     # T5DenseGatedActDense
-    def __init__(self, d_model, d_ff, dropout_rate, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, d_model, d_ff, dropout_rate, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.wi_0 = nn.Linear(d_model, d_ff, bias=False, device=device, dtype=dtype)
         self.wi_1 = nn.Linear(d_model, d_ff, bias=False, device=device, dtype=dtype)
@@ -32,23 +32,20 @@ class T5FeedForward(nn.Module):
 
 
 class T5EncoderLayer(nn.Module):
-    def __init__(self,
-                 embed_dim: int,
-                 num_heads: int,
-                 head_dim: int,
-                 d_ff: int,
-                 eps: float,
-                 dropout_rate: float = 0.0,
-                 device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.float16):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        head_dim: int,
+        d_ff: int,
+        eps: float,
+        dropout_rate: float = 0.0,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
+    ):
         super().__init__()
         self.attn = Attention(
-            q_dim=embed_dim,
-            num_heads=num_heads,
-            head_dim=head_dim,
-            scale=1.0,
-            device=device,
-            dtype=dtype
+            q_dim=embed_dim, num_heads=num_heads, head_dim=head_dim, scale=1.0, device=device, dtype=dtype
         )
         self.attn_norm = RMSNorm(embed_dim, eps=eps, device=device, dtype=dtype)
         self.feed_forward = T5FeedForward(embed_dim, d_ff, dropout_rate, device=device, dtype=dtype)
@@ -56,9 +53,9 @@ class T5EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(
-            self,
-            hidden_states,
-            attention_mask=None,
+        self,
+        hidden_states,
+        attention_mask=None,
     ):
         # Self Attention
         attn_output = self.attn(
@@ -84,17 +81,19 @@ class T5EncoderModelStateDictConverter(StateDictConverter):
         }
 
         for i in range(self.num_encoder_layers):
-            rename_dict.update({
-                f"encoder.block.{i}.layer.0.SelfAttention.q.weight": f"encoders.{i}.attn.to_q.weight",
-                f"encoder.block.{i}.layer.0.SelfAttention.k.weight": f"encoders.{i}.attn.to_k.weight",
-                f"encoder.block.{i}.layer.0.SelfAttention.v.weight": f"encoders.{i}.attn.to_v.weight",
-                f"encoder.block.{i}.layer.0.SelfAttention.o.weight": f"encoders.{i}.attn.to_out.weight",
-                f"encoder.block.{i}.layer.0.layer_norm.weight": f"encoders.{i}.attn_norm.weight",
-                f"encoder.block.{i}.layer.1.DenseReluDense.wi_0.weight": f"encoders.{i}.feed_forward.wi_0.weight",
-                f"encoder.block.{i}.layer.1.DenseReluDense.wi_1.weight": f"encoders.{i}.feed_forward.wi_1.weight",
-                f"encoder.block.{i}.layer.1.DenseReluDense.wo.weight": f"encoders.{i}.feed_forward.wo.weight",
-                f"encoder.block.{i}.layer.1.layer_norm.weight": f"encoders.{i}.ffn_norm.weight",
-            })
+            rename_dict.update(
+                {
+                    f"encoder.block.{i}.layer.0.SelfAttention.q.weight": f"encoders.{i}.attn.to_q.weight",
+                    f"encoder.block.{i}.layer.0.SelfAttention.k.weight": f"encoders.{i}.attn.to_k.weight",
+                    f"encoder.block.{i}.layer.0.SelfAttention.v.weight": f"encoders.{i}.attn.to_v.weight",
+                    f"encoder.block.{i}.layer.0.SelfAttention.o.weight": f"encoders.{i}.attn.to_out.weight",
+                    f"encoder.block.{i}.layer.0.layer_norm.weight": f"encoders.{i}.attn_norm.weight",
+                    f"encoder.block.{i}.layer.1.DenseReluDense.wi_0.weight": f"encoders.{i}.feed_forward.wi_0.weight",
+                    f"encoder.block.{i}.layer.1.DenseReluDense.wi_1.weight": f"encoders.{i}.feed_forward.wi_1.weight",
+                    f"encoder.block.{i}.layer.1.DenseReluDense.wo.weight": f"encoders.{i}.feed_forward.wo.weight",
+                    f"encoder.block.{i}.layer.1.layer_norm.weight": f"encoders.{i}.ffn_norm.weight",
+                }
+            )
 
         new_state_dict = {}
         for key, param in state_dict.items():
@@ -115,18 +114,18 @@ class T5EncoderModel(PreTrainedModel):
     converter = T5EncoderModelStateDictConverter()
 
     def __init__(
-            self,
-            embed_dim: int = 4096,
-            vocab_size: int = 32128,
-            num_encoder_layers: int = 24,
-            d_ff: int = 10240,
-            num_heads: int = 64,
-            relative_attention_num_buckets: int = 32,
-            relative_attention_max_distance: int = 128,
-            dropout_rate: float = 0.1,
-            eps: float = 1e-6,
-            device: str = 'cuda:0',
-            dtype: torch.dtype = torch.float16
+        self,
+        embed_dim: int = 4096,
+        vocab_size: int = 32128,
+        num_encoder_layers: int = 24,
+        d_ff: int = 10240,
+        num_heads: int = 64,
+        relative_attention_num_buckets: int = 32,
+        relative_attention_max_distance: int = 128,
+        dropout_rate: float = 0.1,
+        eps: float = 1e-6,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float16,
     ):
         super().__init__()
 
@@ -139,18 +138,21 @@ class T5EncoderModel(PreTrainedModel):
         )
 
         # encoders
-        self.encoders = nn.ModuleList([
-            T5EncoderLayer(
-                embed_dim=embed_dim,
-                num_heads=num_heads,
-                head_dim=embed_dim // num_heads,
-                d_ff=d_ff,
-                eps=eps,
-                dropout_rate=dropout_rate,
-                device=device,
-                dtype=dtype
-            ) for i in range(num_encoder_layers)
-        ])
+        self.encoders = nn.ModuleList(
+            [
+                T5EncoderLayer(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    head_dim=embed_dim // num_heads,
+                    d_ff=d_ff,
+                    eps=eps,
+                    dropout_rate=dropout_rate,
+                    device=device,
+                    dtype=dtype,
+                )
+                for i in range(num_encoder_layers)
+            ]
+        )
 
         # final_layer_norm
         self.final_layer_norm = RMSNorm(embed_dim, eps=eps, device=device, dtype=dtype)
@@ -171,10 +173,7 @@ class T5EncoderModel(PreTrainedModel):
         else:
             attention_mask = position_bias
         for layer_module in self.encoders:
-            hidden_states = layer_module(
-                hidden_states,
-                attention_mask=attention_mask
-            )
+            hidden_states = layer_module(hidden_states, attention_mask=attention_mask)
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states

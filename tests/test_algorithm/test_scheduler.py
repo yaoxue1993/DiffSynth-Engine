@@ -1,9 +1,18 @@
 import unittest
 import torch
+
 from ..common.test_case import ImageTestCase
-from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, ExponentialScheduler, KarrasScheduler, BetaScheduler, DDIMScheduler, SGMUniformScheduler
+from diffsynth_engine.algorithm.noise_scheduler import (
+    ScaledLinearScheduler,
+    ExponentialScheduler,
+    KarrasScheduler,
+    BetaScheduler,
+    DDIMScheduler,
+    SGMUniformScheduler,
+)
 from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import RecifitedFlowScheduler
 from diffsynth_engine.pipelines.flux_image import calculate_shift
+
 
 class TestScheduler(ImageTestCase):
     def test_linear_scheduler(self):
@@ -41,7 +50,9 @@ class TestScheduler(ImageTestCase):
         num_inference_steps = 20
         sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
         scheduler = RecifitedFlowScheduler(use_dynamic_shifting=True)
-        sigmas, timesteps = scheduler.schedule(num_inference_steps, mu=calculate_shift(width//16 * height//16), sigmas=sigmas)
+        sigmas, timesteps = scheduler.schedule(
+            num_inference_steps, mu=calculate_shift(width // 16 * height // 16), sigmas=sigmas
+        )
         expect_tensors = self.get_expect_tensor("algorithm/recifited_flow_20steps_flux.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, expect_tensors["timesteps"])
@@ -66,6 +77,7 @@ class TestScheduler(ImageTestCase):
         expect_tensors = self.get_expect_tensor("algorithm/sgm_uniform_20steps.safetensors")
         self.assertTensorEqual(sigmas, expect_tensors["sigmas"])
         self.assertTensorEqual(timesteps, scheduler.sigma_to_t(expect_tensors["sigmas"][:-1]))
+
 
 if __name__ == "__main__":
     unittest.main()

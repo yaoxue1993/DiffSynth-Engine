@@ -9,12 +9,15 @@ from diffsynth_engine.utils.download import ensure_directory_exists
 from diffsynth_engine import fetch_modelscope_model
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
+
 class TestFluxDiT(TestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model("muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors")
+        model_path = fetch_modelscope_model(
+            "muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"
+        )
         loaded_state_dict = load_file(model_path)
-        cls.dit = FluxDiT.from_state_dict(loaded_state_dict, device='cuda:0', dtype=torch.bfloat16).eval()
+        cls.dit = FluxDiT.from_state_dict(loaded_state_dict, device="cuda:0", dtype=torch.bfloat16).eval()
 
     def test_dit(self):
         expected_tensor = self.get_expect_tensor("flux/flux_dit.safetensors")
@@ -23,26 +26,34 @@ class TestFluxDiT(TestCase):
         batch_size, num_channels_latents, height, width = 1, 16, 128, 128
         clip_embed_dim = 768
         t5_seq_len, t5_embed_dim = 512, 4096
-        generator = torch.Generator('cuda:0').manual_seed(42)
-        latents = torch.randn((batch_size, num_channels_latents, height, width), generator=generator, device='cuda:0',
-                              dtype=torch.bfloat16)
-        timestep = torch.tensor([1000.0], device='cuda:0', dtype=torch.bfloat16)
-        pooled_prompt_emb = torch.randn((batch_size, clip_embed_dim), generator=generator, device='cuda:0',
-                                        dtype=torch.bfloat16)
-        prompt_emb = torch.randn((batch_size, t5_seq_len, t5_embed_dim), generator=generator, device='cuda:0',
-                                 dtype=torch.bfloat16)
-        guidance = torch.tensor([1.0], device='cuda:0', dtype=torch.bfloat16)
-        text_ids = torch.zeros((1, t5_seq_len, 3), device='cuda:0', dtype=torch.bfloat16)
+        generator = torch.Generator("cuda:0").manual_seed(42)
+        latents = torch.randn(
+            (batch_size, num_channels_latents, height, width),
+            generator=generator,
+            device="cuda:0",
+            dtype=torch.bfloat16,
+        )
+        timestep = torch.tensor([1000.0], device="cuda:0", dtype=torch.bfloat16)
+        pooled_prompt_emb = torch.randn(
+            (batch_size, clip_embed_dim), generator=generator, device="cuda:0", dtype=torch.bfloat16
+        )
+        prompt_emb = torch.randn(
+            (batch_size, t5_seq_len, t5_embed_dim), generator=generator, device="cuda:0", dtype=torch.bfloat16
+        )
+        guidance = torch.tensor([1.0], device="cuda:0", dtype=torch.bfloat16)
+        text_ids = torch.zeros((1, t5_seq_len, 3), device="cuda:0", dtype=torch.bfloat16)
         image_ids = self.dit.prepare_image_ids(latents)
 
         with torch.no_grad():
-            output = self.dit(latents,
-                              timestep=timestep,
-                              prompt_emb=prompt_emb,
-                              pooled_prompt_emb=pooled_prompt_emb,
-                              guidance=guidance,
-                              image_ids=image_ids,
-                              text_ids=text_ids).cpu()
+            output = self.dit(
+                latents,
+                timestep=timestep,
+                prompt_emb=prompt_emb,
+                pooled_prompt_emb=pooled_prompt_emb,
+                guidance=guidance,
+                image_ids=image_ids,
+                text_ids=text_ids,
+            ).cpu()
             self.assertTensorEqual(output, expected)
 
     @unittest.skipUnless(RUN_EXTRA_TEST, "RUN_EXTRA_TEST is not set")
@@ -117,7 +128,7 @@ class TestFluxDiT(TestCase):
                     _state_dict[rename_dict[key]] = param
                 elif key.startswith("double_blocks."):
                     sp = key.split(".")
-                    block_id, suffix = sp[1], '.'.join(sp[2:])
+                    block_id, suffix = sp[1], ".".join(sp[2:])
                     if isinstance(double_blocks_rename_dict[suffix], str):
                         key = f"transformer_blocks.{block_id}.{double_blocks_rename_dict[suffix]}"
                         _state_dict[key] = param
@@ -127,7 +138,7 @@ class TestFluxDiT(TestCase):
                             _state_dict[f"transformer_blocks.{block_id}.{s}"] = p
                 elif key.startswith("single_blocks."):
                     sp = key.split(".")
-                    block_id, suffix = sp[1], '.'.join(sp[2:])
+                    block_id, suffix = sp[1], ".".join(sp[2:])
                     if isinstance(single_blocks_rename_dict[suffix], str):
                         key = f"single_transformer_blocks.{block_id}.{single_blocks_rename_dict[suffix]}"
                         _state_dict[key] = param
@@ -139,47 +150,58 @@ class TestFluxDiT(TestCase):
 
         with no_init_weights():
             model = FluxTransformer2DModel(guidance_embeds=True)
-            model = model.to(device='cuda:0', dtype=torch.bfloat16).eval()
+            model = model.to(device="cuda:0", dtype=torch.bfloat16).eval()
         loaded_state_dict = load_file(self._model_path)
         model.load_state_dict(_convert(loaded_state_dict))
 
         batch_size, num_channels_latents, height, width = 1, 16, 128, 128
         clip_embed_dim = 768
         t5_seq_len, t5_embed_dim = 512, 4096
-        generator = torch.Generator('cuda:0').manual_seed(42)
-        latents = torch.randn((batch_size, num_channels_latents, height, width), generator=generator, device='cuda:0',
-                              dtype=torch.bfloat16)
-        timestep = torch.tensor([1000.0], device='cuda:0', dtype=torch.bfloat16)
-        pooled_prompt_emb = torch.randn((batch_size, clip_embed_dim), generator=generator, device='cuda:0',
-                                        dtype=torch.bfloat16)
-        prompt_emb = torch.randn((batch_size, t5_seq_len, t5_embed_dim), generator=generator, device='cuda:0',
-                                 dtype=torch.bfloat16)
-        guidance = torch.tensor([1.0], device='cuda:0', dtype=torch.bfloat16)
-        text_ids = torch.zeros((t5_seq_len, 3), device='cuda:0', dtype=torch.bfloat16)
+        generator = torch.Generator("cuda:0").manual_seed(42)
+        latents = torch.randn(
+            (batch_size, num_channels_latents, height, width),
+            generator=generator,
+            device="cuda:0",
+            dtype=torch.bfloat16,
+        )
+        timestep = torch.tensor([1000.0], device="cuda:0", dtype=torch.bfloat16)
+        pooled_prompt_emb = torch.randn(
+            (batch_size, clip_embed_dim), generator=generator, device="cuda:0", dtype=torch.bfloat16
+        )
+        prompt_emb = torch.randn(
+            (batch_size, t5_seq_len, t5_embed_dim), generator=generator, device="cuda:0", dtype=torch.bfloat16
+        )
+        guidance = torch.tensor([1.0], device="cuda:0", dtype=torch.bfloat16)
+        text_ids = torch.zeros((t5_seq_len, 3), device="cuda:0", dtype=torch.bfloat16)
 
         packed_latents = FluxPipeline._pack_latents(latents, batch_size, num_channels_latents, height, width)
-        image_ids = FluxPipeline._prepare_latent_image_ids(batch_size, height, width, device='cuda:0',
-                                                           dtype=torch.bfloat16)
+        image_ids = FluxPipeline._prepare_latent_image_ids(
+            batch_size, height, width, device="cuda:0", dtype=torch.bfloat16
+        )
 
         with torch.no_grad():
-            output = model(packed_latents,
-                           encoder_hidden_states=prompt_emb,
-                           pooled_projections=pooled_prompt_emb,
-                           timestep=timestep / 1000,
-                           img_ids=image_ids,
-                           txt_ids=text_ids,
-                           guidance=guidance)
+            output = model(
+                packed_latents,
+                encoder_hidden_states=prompt_emb,
+                pooled_projections=pooled_prompt_emb,
+                timestep=timestep / 1000,
+                img_ids=image_ids,
+                txt_ids=text_ids,
+                guidance=guidance,
+            )
             expected = FluxPipeline._unpack_latents(output.sample, height, width, 2)
 
             image_ids = repeat(image_ids, "s d -> b s d", b=batch_size)
             text_ids = repeat(text_ids, "s d -> b s d", b=batch_size)
-            output = self.dit(latents,
-                              timestep=timestep,
-                              prompt_emb=prompt_emb,
-                              pooled_prompt_emb=pooled_prompt_emb,
-                              guidance=guidance,
-                              image_ids=image_ids,
-                              text_ids=text_ids)
+            output = self.dit(
+                latents,
+                timestep=timestep,
+                prompt_emb=prompt_emb,
+                pooled_prompt_emb=pooled_prompt_emb,
+                guidance=guidance,
+                image_ids=image_ids,
+                text_ids=text_ids,
+            )
             self.assertTensorEqual(output, expected)
 
         expect = {"output": output}

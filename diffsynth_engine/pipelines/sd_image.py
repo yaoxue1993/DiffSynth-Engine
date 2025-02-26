@@ -81,15 +81,17 @@ def convert_diffusers_name_to_compvis(key):
         return f"model.diffusion_model.output_blocks.{2 + m[0] * 3}.{2 if m[0] > 0 else 1}.conv"
     return key
 
+
 @dataclass
 class SDModelConfig:
-    model_path: str
-    vae_path: Optional[str] = None
-    clip_path: Optional[str] = None
-    
-    clip_dtype: torch.dtype = torch.float16
+    unet_path: str | os.PathLike
+    clip_path: Optional[str | os.PathLike] = None
+    vae_path: Optional[str | os.PathLike] = None
+
     unet_dtype: torch.dtype = torch.float16
+    clip_dtype: torch.dtype = torch.float16
     vae_dtype: torch.dtype = torch.float32
+
 
 class SDLoRAConverter(LoRAStateDictConverter):
     def _replace_kohya_te_key(self, key):
@@ -171,7 +173,7 @@ class SDImagePipeline(BasePipeline):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | os.PathLike | List[str | os.PathLike],
+        model_path_or_config: str | os.PathLike | SDModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
         cpu_offload: bool = False,
@@ -180,33 +182,39 @@ class SDImagePipeline(BasePipeline):
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
-        if isinstance(pretrained_model_paths, str):
-            model_config = SDModelConfig(model_path=pretrained_model_paths)
+        if isinstance(model_path_or_config, str):
+            model_config = SDModelConfig(unet_path=model_path_or_config)
         else:
-            model_config = pretrained_model_paths
-        
-        assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"
+            model_config = model_path_or_config
+
+        assert os.path.isfile(model_config.unet_path) and model_config.unet_path.endswith(".safetensors"), (
+            f"{model_config.unet_path} is not a .safetensors file"
+        )
         if model_config.vae_path is not None:
             assert os.path.isfile(model_config.vae_path)
         if model_config.clip_path is not None:
-            assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), f"{model_config.clip_path} is not a .safetensors file"
-    
-        unet_state_dict = load_file(model_config.model_path, device="cpu")
-        
+            assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), (
+                f"{model_config.clip_path} is not a .safetensors file"
+            )
+
+        unet_state_dict = load_file(model_config.unet_path, device="cpu")
+
         if model_config.vae_path is not None:
             vae_state_dict = load_file(model_config.vae_path, device="cpu")
         else:
             vae_state_dict = unet_state_dict
-        
+
         if model_config.clip_path is not None:
             clip_state_dict = load_file(model_config.clip_path, device="cpu")
         else:
             clip_state_dict = unet_state_dict
-    
+
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         with LoRAContext():
-            text_encoder = SDTextEncoder.from_state_dict(clip_state_dict, device=init_device, dtype=model_config.clip_dtype)
+            text_encoder = SDTextEncoder.from_state_dict(
+                clip_state_dict, device=init_device, dtype=model_config.clip_dtype
+            )
             unet = SDUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
         vae_decoder = SDVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = SDVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)

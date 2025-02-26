@@ -30,7 +30,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
         for name, param in state_dict.items():
             if name.endswith(".weight") or name.endswith(".bias"):
                 suffix = ".weight" if name.endswith(".weight") else ".bias"
-                prefix = name[:-len(suffix)]
+                prefix = name[: -len(suffix)]
                 if prefix in global_rename_dict:
                     state_dict_[global_rename_dict[prefix] + suffix] = param
                 elif prefix.startswith("transformer_blocks."):
@@ -54,12 +54,15 @@ class FluxDiTStateDictConverter(StateDictConverter):
         for name in list(state_dict_.keys()):
             if ".proj_in_besides_attn." in name:
                 name_ = name.replace(".proj_in_besides_attn.", ".to_qkv_mlp.")
-                param = torch.concat([
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_q.")],
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_k.")],
-                    state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_v.")],
-                    state_dict_[name],
-                ], dim=0)
+                param = torch.concat(
+                    [
+                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_q.")],
+                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_k.")],
+                        state_dict_[name.replace(".proj_in_besides_attn.", f".a_to_v.")],
+                        state_dict_[name],
+                    ],
+                    dim=0,
+                )
                 state_dict_[name_] = param
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_q."))
                 state_dict_.pop(name.replace(".proj_in_besides_attn.", f".a_to_k."))
@@ -69,11 +72,14 @@ class FluxDiTStateDictConverter(StateDictConverter):
             for component in ["a", "b"]:
                 if f".{component}_to_q." in name:
                     name_ = name.replace(f".{component}_to_q.", f".{component}_to_qkv.")
-                    param = torch.concat([
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_q.")],
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_k.")],
-                        state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_v.")],
-                    ], dim=0)
+                    param = torch.concat(
+                        [
+                            state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_q.")],
+                            state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_k.")],
+                            state_dict_[name.replace(f".{component}_to_q.", f".{component}_to_v.")],
+                        ],
+                        dim=0,
+                    )
                     state_dict_[name_] = param
                     state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_q."))
                     state_dict_.pop(name.replace(f".{component}_to_q.", f".{component}_to_k."))
@@ -85,7 +91,7 @@ class FluxDiTStateDictConverter(StateDictConverter):
         suffix_rename_dict = config["civitai"]["suffix_rename_dict"]
         state_dict_ = {}
         for name, param in state_dict.items():
-            name = name.replace('model.diffusion_model.', '')
+            name = name.replace("model.diffusion_model.", "")
             names = name.split(".")
             if name in rename_dict:
                 if name.startswith("final_layer.adaLN_modulation.1."):
@@ -100,13 +106,10 @@ class FluxDiTStateDictConverter(StateDictConverter):
                     state_dict_[name_] = param
             else:
                 pass
-        if "guidance_embedder.timestep_embedder.0.weight" not in state_dict_:
-            return state_dict_, {"disable_guidance_embedder": True} # TODO: remove
-        else:
-            return state_dict_
+        return state_dict_
 
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        if "txt_in.weight" in state_dict or 'model.diffusion_model.txt_in.weight' in state_dict:
+        if "txt_in.weight" in state_dict or "model.diffusion_model.txt_in.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
         elif "time_text_embed.timestep_embedder.linear_1.weight" in state_dict:
@@ -118,8 +121,16 @@ class FluxDiTStateDictConverter(StateDictConverter):
 
 
 class FluxJointAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, only_out_a=False, device: str = 'cuda:0',
-                 dtype: torch.dtype = torch.bfloat16):
+    def __init__(
+        self,
+        dim_a,
+        dim_b,
+        num_heads,
+        head_dim,
+        only_out_a=False,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -168,8 +179,10 @@ class FluxJointAttention(nn.Module):
         hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
-        hidden_states_b, hidden_states_a = (hidden_states[:, :hidden_states_b.shape[1]],
-                                            hidden_states[:, hidden_states_b.shape[1]:])
+        hidden_states_b, hidden_states_a = (
+            hidden_states[:, : hidden_states_b.shape[1]],
+            hidden_states[:, hidden_states_b.shape[1] :],
+        )
         hidden_states_a = self.a_to_out(hidden_states_a)
         if self.only_out_a:
             return hidden_states_a
@@ -179,26 +192,25 @@ class FluxJointAttention(nn.Module):
 
 
 class FluxJointTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.norm1_a = AdaLayerNorm(dim, device=device, dtype=dtype)
         self.norm1_b = AdaLayerNorm(dim, device=device, dtype=dtype)
 
-        self.attn = FluxJointAttention(dim, dim, num_attention_heads, dim // num_attention_heads,
-                                       device=device, dtype=dtype)
+        self.attn = FluxJointAttention(
+            dim, dim, num_attention_heads, dim // num_attention_heads, device=device, dtype=dtype
+        )
 
         self.norm2_a = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_a = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim, dim * 4), nn.GELU(approximate="tanh"), nn.Linear(dim * 4, dim, device=device, dtype=dtype)
         )
 
         self.norm2_b = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6, device=device, dtype=dtype)
         self.ff_b = nn.Sequential(
             nn.Linear(dim, dim * 4, device=device, dtype=dtype),
             nn.GELU(approximate="tanh"),
-            nn.Linear(dim * 4, dim, device=device, dtype=dtype)
+            nn.Linear(dim * 4, dim, device=device, dtype=dtype),
         )
 
     def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb):
@@ -222,7 +234,7 @@ class FluxJointTransformerBlock(nn.Module):
 
 
 class FluxSingleAttention(nn.Module):
-    def __init__(self, dim_a, dim_b, num_heads, head_dim, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim_a, dim_b, num_heads, head_dim, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -256,7 +268,7 @@ class FluxSingleAttention(nn.Module):
 
 
 class FluxSingleTransformerBlock(nn.Module):
-    def __init__(self, dim, num_attention_heads, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, dim, num_attention_heads, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.num_heads = num_attention_heads
         self.head_dim = dim // num_attention_heads
@@ -294,7 +306,7 @@ class FluxSingleTransformerBlock(nn.Module):
         residual = hidden_states_a
         norm_hidden_states, gate = self.norm(hidden_states_a, emb=temb)
         hidden_states_a = self.to_qkv_mlp(norm_hidden_states)
-        attn_output, mlp_hidden_states = hidden_states_a[:, :, :self.dim * 3], hidden_states_a[:, :, self.dim * 3:]
+        attn_output, mlp_hidden_states = hidden_states_a[:, :, : self.dim * 3], hidden_states_a[:, :, self.dim * 3 :]
 
         attn_output = self.process_attention(attn_output, image_rotary_emb)
         mlp_hidden_states = nn.functional.gelu(mlp_hidden_states, approximate="tanh")
@@ -323,21 +335,27 @@ class AdaLayerNormContinuous(nn.Module):
 class FluxDiT(PreTrainedModel):
     converter = FluxDiTStateDictConverter()
 
-    def __init__(self, disable_guidance_embedder=False, device: str = 'cuda:0', dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, disable_guidance_embedder=False, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        self.guidance_embedder = None if disable_guidance_embedder else TimestepEmbeddings(256, 3072,
-                                                                                           device=device, dtype=dtype)
-        self.pooled_text_embedder = nn.Sequential(nn.Linear(768, 3072, device=device, dtype=dtype), nn.SiLU(),
-                                                  nn.Linear(3072, 3072, device=device, dtype=dtype))
+        self.guidance_embedder = (
+            None if disable_guidance_embedder else TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
+        )
+        self.pooled_text_embedder = nn.Sequential(
+            nn.Linear(768, 3072, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(3072, 3072, device=device, dtype=dtype),
+        )
         self.context_embedder = nn.Linear(4096, 3072, device=device, dtype=dtype)
         self.x_embedder = nn.Linear(64, 3072, device=device, dtype=dtype)
 
         self.blocks = nn.ModuleList(
-            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)])
+            [FluxJointTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(19)]
+        )
         self.single_blocks = nn.ModuleList(
-            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)])
+            [FluxSingleTransformerBlock(3072, 24, device=device, dtype=dtype) for _ in range(38)]
+        )
 
         self.final_norm_out = AdaLayerNormContinuous(3072, device=device, dtype=dtype)
         self.final_proj_out = nn.Linear(3072, 64, device=device, dtype=dtype)
@@ -347,8 +365,9 @@ class FluxDiT(PreTrainedModel):
         return hidden_states
 
     def unpatchify(self, hidden_states, height, width):
-        hidden_states = rearrange(hidden_states, "B (H W) (C P Q) -> B C (H P) (W Q)", P=2, Q=2, H=height // 2,
-                                  W=width // 2)
+        hidden_states = rearrange(
+            hidden_states, "B (H W) (C P Q) -> B C (H P) (W Q)", P=2, Q=2, H=height // 2, W=width // 2
+        )
         return hidden_states
 
     def prepare_image_ids(self, latents):
@@ -368,11 +387,16 @@ class FluxDiT(PreTrainedModel):
         return latent_image_ids
 
     def tiled_forward(
-            self,
-            hidden_states,
-            timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids,
-            tile_size=128, tile_stride=64,
-            **kwargs
+        self,
+        hidden_states,
+        timestep,
+        prompt_emb,
+        pooled_prompt_emb,
+        guidance,
+        text_ids,
+        tile_size=128,
+        tile_stride=64,
+        **kwargs,
     ):
         # Due to the global positional embedding, we cannot implement layer-wise tiled forward.
         hidden_states = TileWorker().tiled_forward(
@@ -381,24 +405,36 @@ class FluxDiT(PreTrainedModel):
             tile_size,
             tile_stride,
             tile_device=hidden_states.device,
-            tile_dtype=hidden_states.dtype
+            tile_dtype=hidden_states.dtype,
         )
         return hidden_states
 
     def forward(
-            self,
-            hidden_states,
-            timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids, image_ids=None,
-            tiled=False, tile_size=128, tile_stride=64,
-            use_gradient_checkpointing=False,
-            **kwargs
+        self,
+        hidden_states,
+        timestep,
+        prompt_emb,
+        pooled_prompt_emb,
+        guidance,
+        text_ids,
+        image_ids=None,
+        tiled=False,
+        tile_size=128,
+        tile_stride=64,
+        use_gradient_checkpointing=False,
+        **kwargs,
     ):
         if tiled:
             return self.tiled_forward(
                 hidden_states,
-                timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids,
-                tile_size=tile_size, tile_stride=tile_stride,
-                **kwargs
+                timestep,
+                prompt_emb,
+                pooled_prompt_emb,
+                guidance,
+                text_ids,
+                tile_size=tile_size,
+                tile_stride=tile_stride,
+                **kwargs,
             )
 
         if image_ids is None:
@@ -428,7 +464,10 @@ class FluxDiT(PreTrainedModel):
             if self.training and use_gradient_checkpointing:
                 hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
-                    hidden_states, prompt_emb, conditioning, image_rotary_emb,
+                    hidden_states,
+                    prompt_emb,
+                    conditioning,
+                    image_rotary_emb,
                     use_reentrant=False,
                 )
             else:
@@ -439,12 +478,15 @@ class FluxDiT(PreTrainedModel):
             if self.training and use_gradient_checkpointing:
                 hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
-                    hidden_states, prompt_emb, conditioning, image_rotary_emb,
+                    hidden_states,
+                    prompt_emb,
+                    conditioning,
+                    image_rotary_emb,
                     use_reentrant=False,
                 )
             else:
                 hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-        hidden_states = hidden_states[:, prompt_emb.shape[1]:]
+        hidden_states = hidden_states[:, prompt_emb.shape[1] :]
 
         hidden_states = self.final_norm_out(hidden_states, conditioning)
         hidden_states = self.final_proj_out(hidden_states)
@@ -454,15 +496,16 @@ class FluxDiT(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-            cls,
-            state_dict: Dict[str, torch.Tensor],
-            device: str,
-            dtype: torch.dtype,
-            disable_guidance_embedder: bool = False
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        disable_guidance_embedder: bool = False,
     ):
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype,
-                                             disable_guidance_embedder=disable_guidance_embedder)
+            model = torch.nn.utils.skip_init(
+                cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder
+            )
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

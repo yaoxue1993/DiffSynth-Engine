@@ -64,7 +64,7 @@ class SD3TextEncoder1StateDictConverter(StateDictConverter):
 class SD3TextEncoder1(SDTextEncoder):
     converter = SD3TextEncoder1StateDictConverter()
 
-    def __init__(self, vocab_size=49408, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, vocab_size=49408, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__(vocab_size=vocab_size, device=device, dtype=dtype)
 
     def forward(self, input_ids, clip_skip=2):
@@ -80,11 +80,11 @@ class SD3TextEncoder1(SDTextEncoder):
 
     @classmethod
     def from_state_dict(
-            cls,
-            state_dict: Dict[str, torch.Tensor],
-            device: str,
-            dtype: torch.dtype,
-            vocab_size: int = 49408,
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        vocab_size: int = 49408,
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
@@ -142,7 +142,7 @@ class SD3TextEncoder2(SDXLTextEncoder2):
 
 
 class SD3TextEncoder3(T5EncoderModel):
-    def __init__(self, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__(
             embed_dim=4096,
             vocab_size=32128,
@@ -154,7 +154,7 @@ class SD3TextEncoder3(T5EncoderModel):
             dropout_rate=0.1,
             eps=1e-6,
             device=device,
-            dtype=dtype
+            dtype=dtype,
         )
 
     def forward(self, input_ids):

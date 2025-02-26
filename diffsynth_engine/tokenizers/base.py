@@ -6,7 +6,6 @@ TOKENIZER_CONFIG_FILE = "tokenizer_config.json"
 
 
 class BaseTokenizer:
-
     SPECIAL_TOKENS_ATTRIBUTES = [
         "bos_token",
         "eos_token",
@@ -99,10 +98,14 @@ class BaseTokenizer:
     def batch_encode(self, texts: List[str]) -> List[List[int]]:
         raise NotImplementedError()
 
-    def decode(self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> str:
+    def decode(
+        self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> str:
         raise NotImplementedError()
 
-    def batch_decode(self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> List[str]:
+    def batch_decode(
+        self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> List[str]:
         raise NotImplementedError()
 
     @overload
@@ -120,7 +123,9 @@ class BaseTokenizer:
     @overload
     def convert_ids_to_tokens(self, ids: List[int], skip_special_tokens: bool = False) -> List[str]: ...
 
-    def convert_ids_to_tokens(self, ids: Union[int, List[int]], skip_special_tokens: bool = False) -> Union[str, List[str]]:
+    def convert_ids_to_tokens(
+        self, ids: Union[int, List[int]], skip_special_tokens: bool = False
+    ) -> Union[str, List[str]]:
         raise NotImplementedError()
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:

@@ -2,20 +2,18 @@ from ..common.test_case import ImageTestCase
 from diffsynth_engine import fetch_modelscope_model
 from diffsynth_engine.pipelines.sdxl_image import SDXLImagePipeline
 
+
 class TestSDXLImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model("muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors")
+        model_path = fetch_modelscope_model(
+            "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
+        )
         cls.pipe = SDXLImagePipeline.from_pretrained(model_path)
 
     def test_txt2img(self):
         image = self.pipe(
-            prompt="a beautiful girl",
-            width=1024,
-            height=1024,
-            num_inference_steps=20,
-            seed=42,
-            clip_skip=2
+            prompt="a beautiful girl", width=1024, height=1024, num_inference_steps=20, seed=42, clip_skip=2
         )
 
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_txt2img.png", threshold=0.99)
@@ -61,4 +59,3 @@ class TestSDXLImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "sdxl/sdxl_lora.png", threshold=0.99)
-        

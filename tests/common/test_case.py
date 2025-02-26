@@ -20,7 +20,6 @@ class TestCase(unittest.TestCase):
         self.seed = 42
         make_deterministic(self.seed)
 
-
     @staticmethod
     def get_device_name() -> str:
         if torch.cuda.is_available():
@@ -58,7 +57,6 @@ class TestCase(unittest.TestCase):
 
 
 class ImageTestCase(TestCase):
-
     @staticmethod
     def get_expect_image(name) -> Image.Image:
         return Image.open(ImageTestCase.testdata_dir / f"expect/{name}")

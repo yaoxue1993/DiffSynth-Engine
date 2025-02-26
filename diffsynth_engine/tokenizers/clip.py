@@ -28,9 +28,7 @@ def bytes_to_unicode():
     decent coverage. This is a significant percentage of your normal, say, 32K bpe vocab. To avoid that, we want lookup
     tables between utf-8 bytes and unicode strings.
     """
-    bs = (
-            list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
-    )
+    bs = list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
     cs = bs[:]
     n = 0
     for b in range(2**8):
@@ -87,14 +85,14 @@ class CLIPTokenizer(BaseTokenizer):
     model_input_names = ["input_ids", "attention_mask"]
 
     def __init__(
-            self,
-            vocab_file: str,
-            merges_file: str,
-            bos_token: Optional[str] = "<|startoftext|>",
-            eos_token: Optional[str] = "<|endoftext|>",
-            unk_token: Optional[str] = "<|endoftext|>",
-            pad_token: Optional[str] = "<|endoftext|>",  # hack to enable padding
-            **kwargs,
+        self,
+        vocab_file: str,
+        merges_file: str,
+        bos_token: Optional[str] = "<|startoftext|>",
+        eos_token: Optional[str] = "<|endoftext|>",
+        unk_token: Optional[str] = "<|endoftext|>",
+        pad_token: Optional[str] = "<|endoftext|>",  # hack to enable padding
+        **kwargs,
     ):
         super().__init__(
             unk_token=unk_token,
@@ -128,8 +126,8 @@ class CLIPTokenizer(BaseTokenizer):
         with open(tokenizer_config_file, encoding="utf-8") as tokenizer_config_handle:
             init_kwargs = json.load(tokenizer_config_handle)
             init_kwargs.update(**kwargs)
-        vocab_file = os.path.join(pretrained_model_path, cls.vocab_files_names['vocab_file'])
-        merges_file = os.path.join(pretrained_model_path, cls.vocab_files_names['merges_file'])
+        vocab_file = os.path.join(pretrained_model_path, cls.vocab_files_names["vocab_file"])
+        merges_file = os.path.join(pretrained_model_path, cls.vocab_files_names["merges_file"])
         return cls(vocab_file=vocab_file, merges_file=merges_file, **init_kwargs)
 
     @property
@@ -206,7 +204,9 @@ class CLIPTokenizer(BaseTokenizer):
     def batch_encode(self, texts: List[str]) -> List[List[int]]:
         return [self.encode(text) for text in texts]
 
-    def decode(self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> str:
+    def decode(
+        self, ids: List[int], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> str:
         tokens = self.convert_ids_to_tokens(ids, skip_special_tokens)
         text = self.convert_tokens_to_string(tokens)
 
@@ -219,7 +219,9 @@ class CLIPTokenizer(BaseTokenizer):
             text = self.clean_up_tokenization(text)
         return text
 
-    def batch_decode(self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None) -> List[str]:
+    def batch_decode(
+        self, ids: List[List[int]], skip_special_tokens: bool = False, clean_up_tokenization_spaces: bool = None
+    ) -> List[str]:
         return [self.decode(index, skip_special_tokens, clean_up_tokenization_spaces) for index in ids]
 
     def convert_tokens_to_ids(self, tokens: Union[str, List[str]]) -> Union[int, List[int]]:
@@ -245,10 +247,11 @@ class CLIPTokenizer(BaseTokenizer):
         text = byte_array.decode("utf-8", errors="replace").replace("</w>", " ").strip()
         return text
 
-    def __call__(self,
-                 texts: Union[str, List[str]],
-                 max_length: Optional[int] = None,
-                 **kwargs,
+    def __call__(
+        self,
+        texts: Union[str, List[str]],
+        max_length: Optional[int] = None,
+        **kwargs,
     ) -> Dict[str, "torch.Tensor"]:
         """
         Tokenize text and prepare for model inputs.
@@ -279,7 +282,7 @@ class CLIPTokenizer(BaseTokenizer):
             if len(ids) > max_length:
                 ids = ids[:max_length]
                 ids[-1] = self.eos_token_id
-            encoded[i, :len(ids)] = torch.tensor(ids)
-            attention_mask[i, :len(ids)] = torch.ones((1, len(ids)))
+            encoded[i, : len(ids)] = torch.tensor(ids)
+            attention_mask[i, : len(ids)] = torch.ones((1, len(ids)))
 
         return {"input_ids": encoded, "attention_mask": attention_mask}

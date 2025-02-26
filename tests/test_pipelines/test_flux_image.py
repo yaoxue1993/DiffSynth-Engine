@@ -1,12 +1,14 @@
 from ..common.test_case import ImageTestCase
-
 from diffsynth_engine.pipelines import FluxImagePipeline
 from diffsynth_engine import fetch_modelscope_model
+
 
 class TestFLUXImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model("muse/flux-with-vae", revision="20240902173035", path="flux_with_vae.safetensors")
+        model_path = fetch_modelscope_model(
+            "muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"
+        )
         cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
 
     def test_txt2img(self):
@@ -18,7 +20,7 @@ class TestFLUXImage(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.99)
-    
+
     def test_inpainting(self):
         image = self.pipe(
             prompt="a beautiful girl with green hair",
@@ -30,7 +32,7 @@ class TestFLUXImage(ImageTestCase):
             num_inference_steps=20,
             seed=42,
         )
-        self.assertImageEqualAndSaveFailed(image, "flux/flux_inpainting.png", threshold=0.99)\
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_inpainting.png", threshold=0.99)
 
     def test_fused_lora(self):
         lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
@@ -44,7 +46,7 @@ class TestFLUXImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
-    
+
     def test_unfused_lora(self):
         lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)])

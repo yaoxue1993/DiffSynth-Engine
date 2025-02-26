@@ -1,4 +1,6 @@
-from .epsilon import EpsilonSampler
+from diffsynth_engine.algorithm.sampler.stable_diffusion.epsilon import EpsilonSampler
+
+
 class EulerSampler(EpsilonSampler):
     def step(self, latents, model_outputs, i):
         sigma = self.sigmas[i]

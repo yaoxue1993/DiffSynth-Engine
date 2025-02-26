@@ -99,15 +99,16 @@ class SDXLLoRAConverter(LoRAStateDictConverter):
 
 @dataclass
 class SDXLModelConfig:
-    model_path: str
-    vae_path: Optional[str] = None    
-    clip_l_path: Optional[str] = None
-    clip_g_path: Optional[str] = None    
+    unet_path: str | os.PathLike
+    clip_l_path: Optional[str | os.PathLike] = None
+    clip_g_path: Optional[str | os.PathLike] = None
+    vae_path: Optional[str | os.PathLike] = None
 
-    vae_dtype: torch.dtype = torch.float32
     unet_dtype: torch.dtype = torch.float16
     clip_l_dtype: torch.dtype = torch.float16
     clip_g_dtype: torch.dtype = torch.float16
+    vae_dtype: torch.dtype = torch.float32
+
 
 class SDXLImagePipeline(BasePipeline):
     lora_converter = SDXLLoRAConverter()
@@ -145,7 +146,7 @@ class SDXLImagePipeline(BasePipeline):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | SDXLModelConfig,
+        model_path_or_config: str | os.PathLike | SDXLModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
         cpu_offload: bool = False,
@@ -154,20 +155,28 @@ class SDXLImagePipeline(BasePipeline):
         """
         Init pipeline from one or several .safetensors files, assume there is no key conflict.
         """
-        if isinstance(pretrained_model_paths, str):
-            model_config = SDXLModelConfig(model_path=pretrained_model_paths, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype)
+        if isinstance(model_path_or_config, str):
+            model_config = SDXLModelConfig(
+                unet_path=model_path_or_config, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype
+            )
         else:
-            model_config = pretrained_model_paths
-        
-        assert os.path.isfile(model_config.model_path) and model_config.model_path.endswith(".safetensors"), f"{model_config.model_path} is not a .safetensors file"
+            model_config = model_path_or_config
+
+        assert os.path.isfile(model_config.unet_path) and model_config.unet_path.endswith(".safetensors"), (
+            f"{model_config.unet_path} is not a .safetensors file"
+        )
         if model_config.vae_path is not None:
             assert os.path.isfile(model_config.vae_path)
         if model_config.clip_l_path is not None:
-            assert os.path.isfile(model_config.clip_l_path) and model_config.clip_l_path.endswith(".safetensors"), f"{model_config.clip_l_path} is not a .safetensors file"
+            assert os.path.isfile(model_config.clip_l_path) and model_config.clip_l_path.endswith(".safetensors"), (
+                f"{model_config.clip_l_path} is not a .safetensors file"
+            )
         if model_config.clip_g_path is not None:
-            assert os.path.isfile(model_config.clip_g_path) and model_config.clip_g_path.endswith(".safetensors"), f"{model_config.clip_g_path} is not a .safetensors file"
+            assert os.path.isfile(model_config.clip_g_path) and model_config.clip_g_path.endswith(".safetensors"), (
+                f"{model_config.clip_g_path} is not a .safetensors file"
+            )
 
-        unet_state_dict = load_file(model_config.model_path, device="cpu")
+        unet_state_dict = load_file(model_config.unet_path, device="cpu")
 
         if model_config.vae_path is not None:
             vae_state_dict = load_file(model_config.vae_path, device="cpu")
@@ -177,19 +186,23 @@ class SDXLImagePipeline(BasePipeline):
         if model_config.clip_l_path is not None:
             clip_l_state_dict = load_file(model_config.clip_l_path, device="cpu")
         else:
-            clip_l_state_dict = unet_state_dict 
+            clip_l_state_dict = unet_state_dict
 
         if model_config.clip_g_path is not None:
             clip_g_state_dict = load_file(model_config.clip_g_path, device="cpu")
         else:
-            clip_g_state_dict = unet_state_dict        
+            clip_g_state_dict = unet_state_dict
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
-            text_encoder = SDXLTextEncoder.from_state_dict(clip_l_state_dict, device=init_device, dtype=model_config.clip_l_dtype)
-            text_encoder_2 = SDXLTextEncoder2.from_state_dict(clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype)
+            text_encoder = SDXLTextEncoder.from_state_dict(
+                clip_l_state_dict, device=init_device, dtype=model_config.clip_l_dtype
+            )
+            text_encoder_2 = SDXLTextEncoder2.from_state_dict(
+                clip_g_state_dict, device=init_device, dtype=model_config.clip_g_dtype
+            )
             unet = SDXLUNet.from_state_dict(unet_state_dict, device=init_device, dtype=model_config.unet_dtype)
         vae_decoder = SDXLVAEDecoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         vae_encoder = SDXLVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)

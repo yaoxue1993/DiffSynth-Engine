@@ -4,7 +4,7 @@ import math
 
 
 class AdaLayerNorm(nn.Module):
-    def __init__(self, dim, single=False, device: str = 'cuda:0', dtype: torch.dtype = torch.float16):
+    def __init__(self, dim, single=False, device: str = "cuda:0", dtype: torch.dtype = torch.float16):
         super().__init__()
         self.single = single
         self.linear = nn.Linear(dim, dim * (2 if single else 6), device=device, dtype=dtype)
@@ -47,7 +47,7 @@ class RoPEEmbedding(nn.Module):
         assert dim % 2 == 0, "The dimension must be even."
 
         scale = torch.arange(0, dim, 2, dtype=torch.float64, device=pos.device) / dim
-        omega = 1.0 / (theta ** scale)
+        omega = 1.0 / (theta**scale)
 
         batch_size, seq_length = pos.shape
         out = torch.einsum("...n,d->...nd", pos, omega)

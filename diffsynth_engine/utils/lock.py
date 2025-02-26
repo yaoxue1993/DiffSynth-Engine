@@ -10,11 +10,7 @@ logger = logging.get_logger(__name__)
 
 
 class HeartbeatFileLock:
-    def __init__(
-            self,
-            lock_file_path: str,
-            heartbeat_interval: float = 10
-    ):
+    def __init__(self, lock_file_path: str, heartbeat_interval: float = 10):
         self.lock_file_path = lock_file_path
         self.heartbeat_interval = heartbeat_interval
         self.lifetime = math.ceil(heartbeat_interval + 1)
@@ -49,10 +45,10 @@ class HeartbeatFileLock:
         return self
 
     def __exit__(
-            self,
-            exc_type: Optional[type[BaseException]] = None,
-            exc_value: Optional[BaseException] = None,
-            traceback: Optional[TracebackType] = None,
+        self,
+        exc_type: Optional[type[BaseException]] = None,
+        exc_value: Optional[BaseException] = None,
+        traceback: Optional[TracebackType] = None,
     ):
         self._release()
 

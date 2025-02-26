@@ -20,7 +20,7 @@ def compute_normalized_ssim(image1: Image.Image, image2: Image.Image):
     image1_arr = np.array(image1)
     image2_arr = np.array(image2)
     mse = 1 - normalized_root_mse(image1_arr, image2_arr)
-    if image1.mode == 'RGB' or image1.mode == 'RGBA':
+    if image1.mode == "RGB" or image1.mode == "RGBA":
         channel_axis = 2
     else:
         channel_axis = None
