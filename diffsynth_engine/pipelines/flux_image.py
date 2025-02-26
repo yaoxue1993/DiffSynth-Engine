@@ -25,7 +25,8 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.download import fetch_modelscope_model
+from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils.download import fetch_model
 
 logger = logging.get_logger(__name__)
 
@@ -245,39 +246,24 @@ class FluxImagePipeline(BasePipeline):
         )
 
         if model_config.clip_path is None:
-            model_config.clip_path = fetch_modelscope_model(
-                model_id="muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
+            model_config.clip_path = fetch_model(
+                "muse/flux_clip_l", revision="20241209", path="clip_l_bf16.safetensors"
             )
         if model_config.t5_path is None:
-            model_config.t5_path = fetch_modelscope_model(
+            model_config.t5_path = fetch_model(
                 "muse/google_t5_v1_1_xxl", revision="20241024105236", path="t5xxl_v1_1_bf16.safetensors"
             )
         if model_config.vae_path is None:
-            model_config.vae_path = fetch_modelscope_model(
-                "muse/flux_vae", revision="20241015120836", path="ae.safetensors"
-            )
-
-        assert os.path.isfile(model_config.dit_path) and model_config.dit_path.endswith(".safetensors"), (
-            f"{model_config.dit_path} is not a .safetensors file"
-        )
-        assert os.path.isfile(model_config.clip_path) and model_config.clip_path.endswith(".safetensors"), (
-            f"{model_config.clip_path} is not a .safetensors file"
-        )
-        assert os.path.isfile(model_config.t5_path) and model_config.t5_path.endswith(".safetensors"), (
-            f"{model_config.t5_path} is not a .safetensors file"
-        )
-        assert os.path.isfile(model_config.vae_path) and model_config.vae_path.endswith(".safetensors"), (
-            f"{model_config.vae_path} is not a .safetensors file"
-        )
+            model_config.vae_path = fetch_model("muse/flux_vae", revision="20241015120836", path="ae.safetensors")
 
         logger.info(f"loading state dict from {model_config.dit_path} ...")
-        dit_state_dict = load_file(model_config.dit_path, device="cpu")
+        dit_state_dict = cls.load_model_checkpoint(model_config.dit_path, device="cpu", dtype=dtype)
         logger.info(f"loading state dict from {model_config.clip_path} ...")
-        clip_state_dict = load_file(model_config.clip_path, device="cpu")
+        clip_state_dict = cls.load_model_checkpoint(model_config.clip_path, device="cpu", dtype=dtype)
         logger.info(f"loading state dict from {model_config.t5_path} ...")
-        t5_state_dict = load_file(model_config.t5_path, device="cpu")
+        t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=dtype)
         logger.info(f"loading state dict from {model_config.vae_path} ...")
-        vae_state_dict = load_file(model_config.vae_path, device="cpu")
+        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
 
         init_device = "cpu" if cpu_offload else device
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
@@ -456,6 +442,7 @@ class FluxImagePipeline(BasePipeline):
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
 
+    @gguf_inference()
     @torch.no_grad()
     def __call__(
         self,

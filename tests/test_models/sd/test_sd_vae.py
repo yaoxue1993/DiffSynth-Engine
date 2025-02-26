@@ -5,13 +5,13 @@ from safetensors.torch import load_file, save_file
 
 from diffsynth_engine.models.sd import SDVAEEncoder, SDVAEDecoder
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestSDVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
         loaded_state_dict = load_file(model_path)

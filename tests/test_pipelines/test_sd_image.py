@@ -1,12 +1,12 @@
 from ..common.test_case import ImageTestCase
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 from diffsynth_engine.pipelines.sd_image import SDImagePipeline
 
 
 class TestSDImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
         cls.pipe = SDImagePipeline.from_pretrained(model_path)
@@ -29,7 +29,7 @@ class TestSDImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "sd/sd_inpainting.png", threshold=0.99)
 
     def test_unfused_lora(self):
-        lora_model_path = fetch_modelscope_model("MusePublic/148_lora_SD_1_5", revision="765", path="765.safetensors")
+        lora_model_path = fetch_model("MusePublic/148_lora_SD_1_5", revision="765", path="765.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="a girl, drawing",
@@ -42,7 +42,7 @@ class TestSDImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "sd/sd_lora.png", threshold=0.99)
 
     def test_fused_lora(self):
-        lora_model_path = fetch_modelscope_model("MusePublic/148_lora_SD_1_5", revision="765", path="765.safetensors")
+        lora_model_path = fetch_model("MusePublic/148_lora_SD_1_5", revision="765", path="765.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="a girl, drawing",

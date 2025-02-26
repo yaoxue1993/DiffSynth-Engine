@@ -357,7 +357,7 @@ dequantize_functions = {
 SUPPORTED_GGUF_QUANT_TYPES = list(dequantize_functions.keys())
 
 
-def load_gguf_checkpoint(checkpoint_path, dtype=None):
+def load_gguf_checkpoint(checkpoint_path, device="cpu", dtype=None):
     reader = GGUFReader(checkpoint_path)
 
     state_dict = {}
@@ -377,8 +377,8 @@ def load_gguf_checkpoint(checkpoint_path, dtype=None):
 
         param = torch.from_numpy(tensor.data.copy())
         state_dict[name] = (
-            param.to(dtype)
+            param.to(device=device, dtype=dtype)
             if is_torch_compatible
-            else GGUFParameter(param, quant_dtype=quant_dtype, compute_dtype=dtype)
+            else GGUFParameter(param.to(device=device), quant_dtype=quant_dtype, compute_dtype=dtype)
         )
     return state_dict

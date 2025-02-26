@@ -1,12 +1,12 @@
 from ..common.test_case import ImageTestCase
 from diffsynth_engine.pipelines import FluxImagePipeline
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestFLUXImage(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"
         )
         cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
@@ -35,7 +35,7 @@ class TestFLUXImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_inpainting.png", threshold=0.99)
 
     def test_fused_lora(self):
-        lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
+        lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)], fused=True)
         image = self.pipe(
             prompt="1 girl, maria",
@@ -48,7 +48,7 @@ class TestFLUXImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.99)
 
     def test_unfused_lora(self):
-        lora_model_path = fetch_modelscope_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
+        lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="12", path="12.safetensors")
         self.pipe.load_loras([(lora_model_path, 0.8)])
         image = self.pipe(
             prompt="1 girl, maria",
@@ -59,3 +59,22 @@ class TestFLUXImage(ImageTestCase):
         )
         self.pipe.unload_loras()
         self.assertImageEqualAndSaveFailed(image, "flux/flux_lora.png", threshold=0.98)
+
+
+class TestFLUXGGUF(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
+        model_path = fetch_model(
+            "AI-ModelScope/FLUX.1-dev-gguf", path="flux1-dev-Q8_0.gguf"
+        )
+        cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
+
+    def test_gguf_inference(self):
+        image = self.pipe(
+            prompt="A cat holding a sign that says hello world",
+            width=1024,
+            height=1024,
+            num_inference_steps=50,
+            seed=42,
+        )
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.9)

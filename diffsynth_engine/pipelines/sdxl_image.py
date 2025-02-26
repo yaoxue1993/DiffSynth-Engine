@@ -162,34 +162,24 @@ class SDXLImagePipeline(BasePipeline):
         else:
             model_config = model_path_or_config
 
-        assert os.path.isfile(model_config.unet_path) and model_config.unet_path.endswith(".safetensors"), (
-            f"{model_config.unet_path} is not a .safetensors file"
-        )
-        if model_config.vae_path is not None:
-            assert os.path.isfile(model_config.vae_path)
-        if model_config.clip_l_path is not None:
-            assert os.path.isfile(model_config.clip_l_path) and model_config.clip_l_path.endswith(".safetensors"), (
-                f"{model_config.clip_l_path} is not a .safetensors file"
-            )
-        if model_config.clip_g_path is not None:
-            assert os.path.isfile(model_config.clip_g_path) and model_config.clip_g_path.endswith(".safetensors"), (
-                f"{model_config.clip_g_path} is not a .safetensors file"
-            )
-
-        unet_state_dict = load_file(model_config.unet_path, device="cpu")
+        logger.info(f"loading state dict from {model_config.unet_path} ...")
+        unet_state_dict = cls.load_model_checkpoint(model_config.unet_path, device="cpu", dtype=dtype)
 
         if model_config.vae_path is not None:
-            vae_state_dict = load_file(model_config.vae_path, device="cpu")
+            logger.info(f"loading state dict from {model_config.vae_path} ...")
+            vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
         else:
             vae_state_dict = unet_state_dict
 
         if model_config.clip_l_path is not None:
-            clip_l_state_dict = load_file(model_config.clip_l_path, device="cpu")
+            logger.info(f"loading state dict from {model_config.clip_l_path} ...")
+            clip_l_state_dict = cls.load_model_checkpoint(model_config.clip_l_path, device="cpu", dtype=dtype)
         else:
             clip_l_state_dict = unet_state_dict
 
         if model_config.clip_g_path is not None:
-            clip_g_state_dict = load_file(model_config.clip_g_path, device="cpu")
+            logger.info(f"loading state dict from {model_config.clip_g_path} ...")
+            clip_g_state_dict = cls.load_model_checkpoint(model_config.clip_g_path, device="cpu", dtype=dtype)
         else:
             clip_g_state_dict = unet_state_dict
 

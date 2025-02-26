@@ -5,6 +5,8 @@ from typing import Dict, List
 from PIL import Image, ImageOps
 from einops import repeat
 from dataclasses import dataclass
+from safetensors.torch import load_file
+from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -38,6 +40,18 @@ class BasePipeline:
         cls, state_dict: Dict[str, torch.Tensor], device: str = "cuda:0", dtype: torch.dtype = torch.float16
     ) -> "BasePipeline":
         raise NotImplementedError()
+
+    @staticmethod
+    def load_model_checkpoint(
+        checkpoint_path: str, device: str = "cpu", dtype: torch.dtype = torch.float16
+    ) -> Dict[str, torch.Tensor]:
+        if not os.path.isfile(checkpoint_path):
+            FileNotFoundError(f"{checkpoint_path} is not a file")
+        if checkpoint_path.endswith(".safetensors"):
+            return load_file(checkpoint_path, device=device)
+        if checkpoint_path.endswith(".gguf"):
+            return load_gguf_checkpoint(checkpoint_path, device=device, dtype=dtype)
+        raise ValueError(f"{checkpoint_path} is not a .safetensors or .gguf file")
 
     @staticmethod
     def preprocess_image(image: Image.Image) -> torch.Tensor:

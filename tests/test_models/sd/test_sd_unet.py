@@ -2,13 +2,13 @@ import torch
 
 from diffsynth_engine.models.sd.sd_unet import SDUNet
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestSDUNet(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
         cls.unet = SDUNet.from_pretrained(model_path, device="cuda:0", dtype=torch.float16)

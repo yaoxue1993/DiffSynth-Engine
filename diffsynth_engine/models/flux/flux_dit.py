@@ -506,6 +506,7 @@ class FluxDiT(PreTrainedModel):
             model = torch.nn.utils.skip_init(
                 cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder
             )
+            model = model.requires_grad_(False) # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

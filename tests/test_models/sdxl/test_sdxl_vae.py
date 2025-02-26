@@ -6,13 +6,13 @@ from safetensors.torch import load_file, save_file
 from diffsynth_engine.models.sdxl import SDXLVAEEncoder, SDXLVAEDecoder
 from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import ImageTestCase, RUN_EXTRA_TEST
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestSDXLVAE(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
         )
         loaded_state_dict = load_file(model_path)

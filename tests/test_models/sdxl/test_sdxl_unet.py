@@ -2,13 +2,13 @@ import torch
 
 from diffsynth_engine.models.sdxl.sdxl_unet import SDXLUNet
 from tests.common.test_case import ImageTestCase
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestSDXLUNet(ImageTestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
         )
         cls.unet = SDXLUNet.from_pretrained(model_path, device="cuda:0", dtype=torch.float16)

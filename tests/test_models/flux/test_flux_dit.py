@@ -6,14 +6,14 @@ from einops import repeat
 from diffsynth_engine.models.flux import FluxDiT
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.download import ensure_directory_exists
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
 class TestFluxDiT(TestCase):
     @classmethod
     def setUpClass(cls):
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/flux-with-vae", revision="20240902173035", path="flux1-dev-with-vae.safetensors"
         )
         loaded_state_dict = load_file(model_path)

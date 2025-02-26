@@ -7,7 +7,7 @@ from diffsynth_engine.models.sdxl import SDXLTextEncoder, SDXLTextEncoder2
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH, SDXL_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils.download import ensure_directory_exists
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 
 
 class TestSDXLTextEncoder(TestCase):
@@ -16,7 +16,7 @@ class TestSDXLTextEncoder(TestCase):
         cls.tokenizer_1 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         cls.tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
 
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/sd_xl_base_1.0", revision="20240425120250", path="sd_xl_base_1.0.safetensors"
         )
         loaded_state_dict = load_file(model_path)

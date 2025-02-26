@@ -6,7 +6,7 @@ from diffsynth_engine.tokenizers import CLIPTokenizer
 from diffsynth_engine.models.sd import SDTextEncoder
 from diffsynth_engine.utils.constants import SDXL_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import ensure_directory_exists
-from diffsynth_engine import fetch_modelscope_model
+from diffsynth_engine import fetch_model
 from tests.common.test_case import TestCase, RUN_EXTRA_TEST
 
 
@@ -15,7 +15,7 @@ class TestSDTextEncoder(TestCase):
     def setUpClass(cls):
         cls.tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
 
-        model_path = fetch_modelscope_model(
+        model_path = fetch_model(
             "muse/v1-5-pruned-emaonly", revision="20240118200020", path="v1-5-pruned-emaonly.safetensors"
         )
         loaded_state_dict = load_file(model_path)
