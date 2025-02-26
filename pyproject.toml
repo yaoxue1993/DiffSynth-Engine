@@ -17,17 +17,17 @@ dependencies = [
     "torch >= 2.4.1",
     "xformers ; sys_platform == 'linux'",
     "safetensors",
+    "gguf",
     "einops",
     "ftfy",
+    "regex",
     "sentencepiece",
     "tokenizers",
-    "pydantic",
     "modelscope",
     "flufl.lock",
     "scipy",
     "torchsde",
-    "pillow",
-    "regex"
+    "pillow"
 ]
 
 [project.optional-dependencies]
