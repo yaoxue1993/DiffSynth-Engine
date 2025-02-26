@@ -3,8 +3,9 @@ import os
 import torch
 from pathlib import Path
 from PIL import Image
-from typing import Dict
+from typing import Dict, List
 from safetensors.torch import load_file
+from diffsynth_engine.utils.video import save_video, load_video, VideoReader
 
 from tests.common.utils import make_deterministic, compute_normalized_ssim
 
@@ -79,3 +80,37 @@ class ImageTestCase(TestCase):
             name = expect_image_path.split("/")[-1]
             input_image.save(f"{name}")
             raise e
+
+
+class VideoTestCase(TestCase):
+
+    @staticmethod
+    def get_expect_video(name) -> VideoReader:
+        return load_video(VideoTestCase.testdata_dir / "expect" / f"{name}")
+
+    @staticmethod
+    def get_input_video(name) -> VideoReader:
+        return load_video(VideoTestCase.testdata_dir / "input" / f"{name}")
+
+    def save_video(self, video: List[Image.Image], name: str, fps:int=15):
+        save_video(video, f"{name}.mp4", fps=fps)
+
+    def assertVideoEqual(self, input_video: List[Image.Image], expect_video: VideoReader, threshold=0.965, fps:int=15):
+        ssim_list = []
+        for i in range(len(input_video)):
+            ssim_list.append(compute_normalized_ssim(input_video[i], expect_video[i]))
+        ssim_mean = np.mean(ssim_list)
+        self.assertGreaterEqual(ssim_mean, threshold)
+
+    def assertVideoEqualAndSaveFailed(self, input_video: List[Image.Image], expect_video_path: str, threshold=0.965, fps:int=15):
+        """
+        比较input_video和testdata/expect/{name}的SSIM相似度，如果失败则保存input_video到当前工作目录
+        """
+        try:
+            expect_video = self.get_expect_video(expect_video_path)
+            self.assertVideoEqual(input_video, expect_video, threshold=threshold)
+        except Exception as e:
+            name = expect_video_path.split("/")[-1]
+            self.save_video(input_video, f"{name}.mp4", fps=fps)
+            raise e
+

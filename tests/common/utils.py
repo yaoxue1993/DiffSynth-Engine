@@ -28,3 +28,4 @@ def compute_normalized_ssim(image1: Image.Image, image2: Image.Image):
     ssim_normalized = (ssim + 1) / 2
 
     return ssim_normalized
+

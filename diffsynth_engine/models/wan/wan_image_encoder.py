@@ -11,7 +11,7 @@ import torchvision.transforms as T
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-from .attn import attention
+from .attention import attention
 
 
 class SelfAttention(nn.Module):
@@ -876,7 +876,7 @@ class WanImageEncoder(PreTrainedModel):
     converter = WanImageEncoderStateDictConverter()
 
     def __init__(self, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__()
         # init model
         self.model, self.transforms = clip_xlm_roberta_vit_h_14(
             pretrained=False,

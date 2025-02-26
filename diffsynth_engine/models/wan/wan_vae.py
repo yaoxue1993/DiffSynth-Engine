@@ -612,13 +612,13 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
         return state_dict_
     
     def convert(self, state_dict):
-        return state_dict
+        return self.from_civitai(state_dict)
 
 class WanVideoVAE(PreTrainedModel):
     converter = WanVideoVAEStateDictConverter()
 
     def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__()
 
         mean = [
             -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,

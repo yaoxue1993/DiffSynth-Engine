@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import math
 import torch.utils.checkpoint
-from .attn import attention
-
+from .attention import attention
+import json
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-
+from diffsynth_engine.utils.constants import WAN_DIT_1_3B_T2V_CONFIG_FILE, WAN_DIT_14B_I2V_CONFIG_FILE, WAN_DIT_14B_T2V_CONFIG_FILE
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess
@@ -354,7 +354,7 @@ class WanDiT(PreTrainedModel):
                  device: str = "cuda:0",
                  dtype: torch.dtype = torch.bfloat16
         ):
-        super().__init__(device=device, dtype=dtype)
+        super().__init__()
 
         assert model_type in ['t2v', 'i2v']
         self.model_type = model_type
@@ -535,23 +535,14 @@ class WanDiT(PreTrainedModel):
     @classmethod
     def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v'):
         if model_type == '1.3b-t2v':
-            config = {
-                "model_type": "t2v",
-                "patch_size": (1, 2, 2),
-                "text_len": 512,
-                "in_dim": 16,
-                "dim": 1536,
-                "ffn_dim": 8960,
-                "freq_dim": 256,
-                "text_dim": 4096,
-                "out_dim": 16,
-                "num_heads": 12,
-                "num_layers": 30,
-                "window_size": (-1, -1),
-                "qk_norm": True,
-                "cross_attn_norm": True,
-                "eps": 1e-6,
-            }            
+            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, 'r'))
+        elif model_type == '14b-t2v':
+            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, 'r'))
+        elif model_type == '14b-i2v':
+            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, 'r'))
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+        
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
         model.load_state_dict(state_dict)

@@ -222,19 +222,19 @@ class WanTextEncoder(PreTrainedModel):
     converter = WanTextEncoderStateDictConverter()
 
     def __init__(self,
-                 vocab=256384,
-                 dim=4096,
-                 dim_attn=4096,
-                 dim_ffn=10240,
-                 num_heads=64,
-                 num_layers=24,
-                 num_buckets=32,
-                 shared_pos=False,
-                 dropout=0.1,
-                 device: str = "cuda:0",
-                 dtype: torch.dtype = torch.bfloat16                 
+        vocab=256384,
+        dim=4096,
+        dim_attn=4096,
+        dim_ffn=10240,
+        num_heads=64,
+        num_layers=24,
+        num_buckets=32,
+        shared_pos=False,
+        dropout=0.1,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16                 
     ):
-        super(WanTextEncoder, self).__init__(device=device, dtype=dtype)
+        super().__init__()
         self.dim = dim
         self.dim_attn = dim_attn
         self.dim_ffn = dim_ffn
@@ -255,8 +255,6 @@ class WanTextEncoder(PreTrainedModel):
         ])
         self.norm = T5LayerNorm(dim)
 
-        # initialize weights
-        # self.apply(init_weights)
 
     def forward(self, ids, mask=None):
         x = self.token_embedding(ids)
