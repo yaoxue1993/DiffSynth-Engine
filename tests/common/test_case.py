@@ -1,5 +1,6 @@
 import unittest
 import os
+import numpy as np
 import torch
 from pathlib import Path
 from PIL import Image
@@ -80,7 +81,6 @@ class ImageTestCase(TestCase):
             name = expect_image_path.split("/")[-1]
             input_image.save(f"{name}")
             raise e
-
 
 class VideoTestCase(TestCase):
 
