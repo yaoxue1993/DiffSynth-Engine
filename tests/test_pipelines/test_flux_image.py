@@ -1,5 +1,5 @@
 from ..common.test_case import ImageTestCase
-from diffsynth_engine.pipelines import FluxImagePipeline
+from diffsynth_engine.pipelines import FluxImagePipeline, FluxModelConfig
 from diffsynth_engine import fetch_model
 
 
@@ -65,9 +65,16 @@ class TestFLUXGGUF(ImageTestCase):
     @classmethod
     def setUpClass(cls):
         model_path = fetch_model(
-            "AI-ModelScope/FLUX.1-dev-gguf", path="flux1-dev-Q8_0.gguf"
+            "city96/FLUX.1-dev-gguf", path="flux1-dev-Q4_K_S.gguf"
         )
-        cls.pipe = FluxImagePipeline.from_pretrained(model_path).eval()
+        t5_path = fetch_model(
+            "city96/t5-v1_1-xxl-encoder-gguf", path="t5-v1_1-xxl-encoder-Q4_K_S.gguf"
+        )
+        config = FluxModelConfig(
+            dit_path=model_path,
+            t5_path=t5_path,
+        )
+        cls.pipe = FluxImagePipeline.from_pretrained(config).eval()
 
     def test_gguf_inference(self):
         image = self.pipe(
@@ -77,4 +84,4 @@ class TestFLUXGGUF(ImageTestCase):
             num_inference_steps=50,
             seed=42,
         )
-        self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.9)
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.85)

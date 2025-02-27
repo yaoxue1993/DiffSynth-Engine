@@ -6,6 +6,7 @@ from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.basic.relative_position_emb import RelativePositionEmbedding
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm, NewGELUActivation
 from diffsynth_engine.models.basic.attention import Attention
+from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -101,10 +102,41 @@ class T5EncoderModelStateDictConverter(StateDictConverter):
                 new_state_dict[rename_dict[key]] = param
         return new_state_dict
 
+    def _from_civitai(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        rename_dict = {
+            "enc.blk.0.attn_rel_b.weight": "relative_position_embedding.relative_attention_bias.weight",
+            "enc.output_norm.weight": "final_layer_norm.weight",
+            "token_embd.weight": "token_embedding.weight",
+        }
+
+        for i in range(self.num_encoder_layers):
+            rename_dict.update(
+                {
+                    f"enc.blk.{i}.attn_q.weight": f"encoders.{i}.attn.to_q.weight",
+                    f"enc.blk.{i}.attn_k.weight": f"encoders.{i}.attn.to_k.weight",
+                    f"enc.blk.{i}.attn_v.weight": f"encoders.{i}.attn.to_v.weight",
+                    f"enc.blk.{i}.attn_o.weight": f"encoders.{i}.attn.to_out.weight",
+                    f"enc.blk.{i}.attn_norm.weight": f"encoders.{i}.attn_norm.weight",
+                    f"enc.blk.{i}.ffn_gate.weight": f"encoders.{i}.feed_forward.wi_0.weight",
+                    f"enc.blk.{i}.ffn_up.weight": f"encoders.{i}.feed_forward.wi_1.weight",
+                    f"enc.blk.{i}.ffn_down.weight": f"encoders.{i}.feed_forward.wo.weight",
+                    f"enc.blk.{i}.ffn_norm.weight": f"encoders.{i}.ffn_norm.weight",
+                }
+            )
+
+        new_state_dict = {}
+        for key, param in state_dict.items():
+            if key in rename_dict:
+                new_state_dict[rename_dict[key]] = param
+        return new_state_dict
+
     def convert(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "encoder.block.0.layer.0.SelfAttention.v.weight" in state_dict:
             state_dict = self._from_diffusers(state_dict)
             logger.info("use diffusers format state dict")
+        elif "enc.blk.0.attn_v.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+            logger.info("use civitai format state dict")
         else:
             logger.info("use diffsynth format state dict")
         return state_dict
@@ -177,3 +209,12 @@ class T5EncoderModel(PreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
+
+    @classmethod
+    def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):
+        with no_init_weights():
+            model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, **kwargs)
+            model.requires_grad_(False)  # for loading gguf
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
+        return model

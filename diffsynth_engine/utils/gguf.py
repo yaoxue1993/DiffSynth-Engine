@@ -21,6 +21,10 @@ class GGUFParameter(torch.nn.Parameter):
     @property
     def shape(self):
         return dequantize(self).shape
+    
+    @property
+    def dtype(self):
+        return self.compute_dtype
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
@@ -56,7 +60,18 @@ class GGUFParameter(torch.nn.Parameter):
 
 @contextmanager
 def gguf_inference():
+    origin_embedding = F.embedding
     origin_linear = F.linear
+
+    def gguf_embedding(
+        input: torch.Tensor,
+        weight: torch.Tensor,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        if isinstance(weight, GGUFParameter):
+            weight = dequantize(weight)
+        return origin_embedding(input, weight, *args, **kwargs)
 
     def gguf_linear(
         input: torch.Tensor,
@@ -67,8 +82,10 @@ def gguf_inference():
             weight = dequantize(weight)
         return origin_linear(input, weight, bias)
 
+    F.embedding = gguf_embedding
     F.linear = gguf_linear
     yield
+    F.embedding = origin_embedding
     F.linear = origin_linear
 
 
