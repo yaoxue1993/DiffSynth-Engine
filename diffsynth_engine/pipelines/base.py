@@ -145,14 +145,16 @@ class BasePipeline:
             return
         # offload unnecessary models to cpu
         for model_name in self.model_names:
+            logger.info(f"Offloading model {model_name} to cpu")
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if model is not None:
+                if model is not None and next(model.parameters()).device.type != "cpu":
                     model.cpu()
         # load the needed models to device
         for model_name in load_model_names:
+            logger.info(f"Loading model {model_name} to device {self.device}")
             model = getattr(self, model_name)
-            if model is not None:
+            if model is not None and next(model.parameters()).device.type != self.device:
                 model.to(self.device)
         # fresh the cuda cache
         torch.cuda.empty_cache()

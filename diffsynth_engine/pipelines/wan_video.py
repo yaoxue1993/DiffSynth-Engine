@@ -95,9 +95,9 @@ class WanVideoPipeline(BasePipeline):
             latents = self.vae.encode(input_video, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         return latents
     
-    def decode_video(self, latents, tiled=True, tile_size=(34, 34), tile_stride=(18, 16)):
+    def decode_video(self, latents, tiled=True, tile_size=(34, 34), tile_stride=(18, 16), progress_callback=None):
         with torch.autocast(dtype=torch.bfloat16, device_type=torch.device(self.device).type):
-            frames = self.vae.decode(latents, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
+            frames = self.vae.decode(latents, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, progress_callback=progress_callback)
         return frames
 
     def predict_noise_with_cfg(
@@ -182,6 +182,7 @@ class WanVideoPipeline(BasePipeline):
         tiled=True,
         tile_size=(34, 34),
         tile_stride=(18, 16),
+        progress_callback=None, # def progress_callback(current, total, status) 
     ):
         assert height % 8 == 0 and width % 8 == 0, "height and width must be divisible by 8"
         assert (num_frames - 1) % 4 == 0, "num_frames is not 4X+1"
@@ -220,11 +221,12 @@ class WanVideoPipeline(BasePipeline):
                 )
                 # Scheduler
                 latents = self.sampler.step(latents, noise_pred, i)
+                if progress_callback is not None:
+                    progress_callback(i + 1, len(timesteps), "DENOISING")                
 
         # Decode
         self.load_models_to_device(['vae'])
-        frames = self.decode_video(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        self.load_models_to_device([])
+        frames = self.decode_video(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride, progress_callback=progress_callback)
         frames = self.tensor2video(frames[0])
         return frames
 
@@ -244,11 +246,14 @@ class WanVideoPipeline(BasePipeline):
 
         if model_config.vae_path is None:
             model_config.vae_path = fetch_modelscope_model("muse/wan2.1-vae", path="vae.safetensors")
+            model_config.vae_dtype = dtype
         if model_config.t5_path is None:
-            model_config.t5_path = fetch_modelscope_model("muse/wan2.1-t5", path="t5.safetensors")
+            model_config.t5_path = fetch_modelscope_model("muse/wan2.1-umt5", path="umt5.safetensors")
+            model_config.t5_dtype = dtype
         if model_config.model_path is None:
-            model_config.model_path = fetch_modelscope_model("muse/wan2.1-dit", path="dit.safetensors")
-        
+            model_config.model_path = fetch_modelscope_model("muse/wan2.1-1.3b", path="dit.safetensors")
+            model_config.dit_dtype = dtype
+
         assert os.path.isfile(model_config.model_path), f"{model_config.model_path} is not a file"        
         assert os.path.isfile(model_config.vae_path), f"{model_config.vae_path} is not a file"
         assert os.path.isfile(model_config.t5_path), f"{model_config.t5_path} is not a file"
@@ -268,9 +273,10 @@ class WanVideoPipeline(BasePipeline):
         vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
         image_encoder = None        
         if model_config.image_encoder_path is not None:
+            logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
+            image_encoder_state_dict = load_file(model_config.image_encoder_path, device="cpu")
             image_encoder = WanImageEncoder.from_state_dict(image_encoder_state_dict, device=init_device, dtype=model_config.image_encoder_dtype)
-
-
+        
     
         with LoRAContext():
             dit = WanDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype)
