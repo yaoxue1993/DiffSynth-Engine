@@ -220,6 +220,7 @@ class WanTextEncoderStateDictConverter(StateDictConverter):
 
 class WanTextEncoder(PreTrainedModel):
     converter = WanTextEncoderStateDictConverter()
+    
 
     def __init__(self,
         vocab=256384,

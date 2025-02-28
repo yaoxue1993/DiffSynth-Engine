@@ -22,7 +22,7 @@ class LoRA(nn.Module):
         self.dtype = dtype
         self.scale = scale
         self.rank = rank
-        self.alpha = alpha.item()
+        self.alpha = alpha.item() if isinstance(alpha, torch.Tensor) else alpha
         self.up = up.to(device=device, dtype=dtype)
         self.down = down.to(device=device, dtype=dtype)
 
@@ -37,10 +37,13 @@ class LoRA(nn.Module):
         else:
             delta_w = self.scale * (self.alpha / self.rank) * (self.up.weight @ self.down.weight)
         if isinstance(w, (nn.Linear, nn.Conv2d)):
+            delta_w = delta_w.to(device=w.weight.data.device, dtype=w.weight.data.dtype)
             w.weight.data.add_(delta_w)
         elif isinstance(w, nn.Parameter):
+            delta_w = delta_w.to(device=w.data.device, dtype=w.data.dtype)
             w.data.add_(delta_w)
         elif isinstance(w, torch.Tensor):
+            delta_w = delta_w.to(device=w.device, dtype=w.dtype)
             w.add_(delta_w)
 
 

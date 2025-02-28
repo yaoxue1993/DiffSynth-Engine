@@ -13,7 +13,7 @@ class TestWanVideo(VideoTestCase):
             t5_path='wan/t5.safetensors'
         )
         cls.pipe = WanVideoPipeline.from_pretrained(config)
-
+    
     def test_txt2img(self):
         video = self.pipe(
             prompt="A cat run on the street",

@@ -60,7 +60,7 @@ def rope_apply(x, grid_sizes, freqs):
 
         # append to collection
         output.append(x_i)
-    return torch.stack(output).float()
+    return torch.stack(output)
 
 
 class WanRMSNorm(nn.Module):
@@ -72,7 +72,7 @@ class WanRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        return self._norm(x.float()).type_as(x) * self.weight
+        return self._norm(x) * self.weight
 
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
@@ -84,7 +84,7 @@ class WanLayerNorm(nn.LayerNorm):
         super().__init__(dim, elementwise_affine=elementwise_affine, eps=eps)
 
     def forward(self, x):
-        return super().forward(x.float()).type_as(x)
+        return super().forward(x)
 
 
 class WanSelfAttention(nn.Module):
@@ -258,22 +258,26 @@ class WanAttentionBlock(nn.Module):
         context,
         context_lens,
     ):
+        dtype = self.self_attn.q.weight.dtype
         assert e.dtype == torch.float32
         with torch.autocast(dtype=torch.float32, device_type="cuda"):
             e = (self.modulation.to(dtype=e.dtype, device=e.device) + e).chunk(6, dim=1)
         assert e[0].dtype == torch.float32
 
         # self-attention
+        
+        input_x = (self.norm1(x).float() * (1 + e[1]) + e[0]).to(dtype=dtype)
         y = self.self_attn(
-            self.norm1(x).float() * (1 + e[1]) + e[0], seq_lens, grid_sizes,
+            input_x, seq_lens, grid_sizes,
             freqs)
         with torch.autocast(dtype=torch.float32, device_type="cuda"):
             x = x + y * e[2]
-
+        x = x.to(dtype=dtype)
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(self.norm2(x).float() * (1 + e[4]) + e[3])
+            input_x = (self.norm2(x).float() * (1 + e[4]) + e[3]).to(dtype=dtype)
+            y = self.ffn(input_x)
             with torch.autocast(dtype=torch.float32, device_type="cuda"):
                 x = x + y * e[5]
             return x
@@ -351,6 +355,7 @@ class WanDiT(PreTrainedModel):
                  qk_norm=True,
                  cross_attn_norm=False,
                  eps=1e-6,
+                 training:bool = False,
                  device: str = "cuda:0",
                  dtype: torch.dtype = torch.bfloat16
         ):
@@ -373,6 +378,9 @@ class WanDiT(PreTrainedModel):
         self.qk_norm = qk_norm
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
+        self.training = training
+        self.device = device
+        self.dtype = dtype
 
         # embeddings
         self.patch_embedding = nn.Conv3d(
@@ -409,8 +417,6 @@ class WanDiT(PreTrainedModel):
         if model_type == 'i2v':
             self.img_emb = MLPProj(1280, dim)
 
-        # 先跳过权重初始化
-        # self.init_weights()
 
     def forward(
         self,
@@ -452,8 +458,7 @@ class WanDiT(PreTrainedModel):
 
         # time embeddings
         with torch.autocast(dtype=torch.float32, device_type="cuda"):
-            e = self.time_embedding(
-                sinusoidal_embedding_1d(self.freq_dim, timestep).float())
+            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep).float())
             e0 = self.time_projection(e).unflatten(1, (6, self.dim))
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
@@ -499,7 +504,7 @@ class WanDiT(PreTrainedModel):
 
         # unpatchify
         x = self.unpatchify(x, grid_sizes)
-        x = torch.stack(x).float()
+        x = torch.stack(x)
         return x
 
     def unpatchify(self, x, grid_sizes):
@@ -511,26 +516,6 @@ class WanDiT(PreTrainedModel):
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size)])
             out.append(u)
         return out
-
-    def init_weights(self):
-        # basic init
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-
-        # init embeddings
-        nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
-        for m in self.text_embedding.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=.02)
-        for m in self.time_embedding.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=.02)
-
-        # init output layer
-        nn.init.zeros_(self.head.head.weight)
 
     @classmethod
     def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v'):

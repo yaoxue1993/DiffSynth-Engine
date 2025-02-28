@@ -144,10 +144,12 @@ class BasePipeline:
             raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
 
     def enable_cpu_offload(self):
-        if self.device == "cpu":
-            logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
-            return
-        self.offload_mode = "cpu_offload"
+
+        for model_name in self.model_names:
+            model = getattr(self, model_name)
+            if model is not None:
+                model.to("cpu")
+        self.cpu_offload = True
 
     def enable_sequential_cpu_offload(self):
         if self.device == "cpu":
@@ -158,6 +160,7 @@ class BasePipeline:
             if model is not None:
                 enable_sequential_cpu_offload(model, self.device)
         self.offload_mode = "sequential_cpu_offload"
+
 
     def load_models_to_device(self, load_model_names: List[str] | None = None):
         load_model_names = load_model_names if load_model_names else []
@@ -173,12 +176,12 @@ class BasePipeline:
         for model_name in self.model_names:
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if model is not None:
-                    model.cpu()
+                if model is not None and next(model.parameters()).device != "cpu":
+                    model.to("cpu")
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
-            if model is not None:
+            if model is not None and next(model.parameters()).device != self.device:
                 model.to(self.device)
         # fresh the cuda cache
         torch.cuda.empty_cache()

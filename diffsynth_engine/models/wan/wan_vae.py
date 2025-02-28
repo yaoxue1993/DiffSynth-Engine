@@ -616,6 +616,7 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
 
 class WanVideoVAE(PreTrainedModel):
     converter = WanVideoVAEStateDictConverter()
+    
 
     def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
         super().__init__()
