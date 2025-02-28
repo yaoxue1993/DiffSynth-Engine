@@ -12,6 +12,7 @@ class GGUFParameter(torch.nn.Parameter):
         self = torch.Tensor._make_subclass(cls, data, requires_grad)
         self.quant_dtype = quant_dtype
         self.compute_dtype = compute_dtype
+        self._shape = _dequant_shape(self)
 
         return self
 
@@ -19,12 +20,12 @@ class GGUFParameter(torch.nn.Parameter):
         return torch.Tensor._make_subclass(torch.Tensor, self, self.requires_grad)
 
     @property
-    def shape(self):
-        return dequantize(self).shape
-    
-    @property
     def dtype(self):
         return self.compute_dtype
+
+    @property
+    def shape(self):
+        return self._shape
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
@@ -94,6 +95,19 @@ TORCH_COMPATIBLE_QTYPES = {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationT
 
 def _quant_shape_from_byte_shape(shape, type_size, block_size):
     return (*shape[:-1], shape[-1] // type_size * block_size)
+
+
+def _dequant_shape(tensor: torch.Tensor, quant_dtype=None):
+    if isinstance(tensor, GGUFParameter):
+        quant_dtype = tensor.quant_dtype
+        tensor = tensor.as_tensor()
+
+    if quant_dtype is None or quant_dtype in TORCH_COMPATIBLE_QTYPES:
+        return tensor.shape
+
+    block_size, type_size = gguf.GGML_QUANT_SIZES[quant_dtype]
+    shape = _quant_shape_from_byte_shape(tensor.shape, type_size, block_size)
+    return shape
 
 
 def dequantize(tensor: torch.Tensor, quant_dtype=None, compute_dtype=None) -> torch.Tensor:
