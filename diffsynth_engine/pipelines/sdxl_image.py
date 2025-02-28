@@ -149,12 +149,11 @@ class SDXLImagePipeline(BasePipeline):
         model_path_or_config: str | os.PathLike | SDXLModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
-        cpu_offload: bool = False,
+        offload_mode: str | None = None,
         batch_cfg: bool = True,
     ) -> "SDXLImagePipeline":
-        """
-        Init pipeline from one or several .safetensors files, assume there is no key conflict.
-        """
+        cls.validate_offload_mode(offload_mode)
+
         if isinstance(model_path_or_config, str):
             model_config = SDXLModelConfig(
                 unet_path=model_path_or_config, unet_dtype=dtype, clip_l_dtype=dtype, clip_g_dtype=dtype
@@ -183,7 +182,7 @@ class SDXLImagePipeline(BasePipeline):
         else:
             clip_g_state_dict = unet_state_dict
 
-        init_device = "cpu" if cpu_offload else device
+        init_device = "cpu" if offload_mode else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         tokenizer_2 = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
@@ -209,8 +208,10 @@ class SDXLImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        if cpu_offload:
+        if offload_mode == "cpu_offload":
             pipe.enable_cpu_offload()
+        elif offload_mode == "sequential_cpu_offload":
+            pipe.enable_sequential_cpu_offload()
         return pipe
 
     @classmethod

@@ -176,12 +176,11 @@ class SDImagePipeline(BasePipeline):
         model_path_or_config: str | os.PathLike | SDModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
-        cpu_offload: bool = False,
+        offload_mode: str | None = None,
         batch_cfg: bool = True,
     ) -> "SDImagePipeline":
-        """
-        Init pipeline from one or several .safetensors files, assume there is no key conflict.
-        """
+        cls.validate_offload_mode(offload_mode)
+
         if isinstance(model_path_or_config, str):
             model_config = SDModelConfig(unet_path=model_path_or_config)
         else:
@@ -202,7 +201,7 @@ class SDImagePipeline(BasePipeline):
         else:
             clip_state_dict = unet_state_dict
 
-        init_device = "cpu" if cpu_offload else device
+        init_device = "cpu" if offload_mode else device
         tokenizer = CLIPTokenizer.from_pretrained(SDXL_TOKENIZER_CONF_PATH)
         with LoRAContext():
             text_encoder = SDTextEncoder.from_state_dict(
@@ -222,8 +221,10 @@ class SDImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        if cpu_offload:
+        if offload_mode == "cpu_offload":
             pipe.enable_cpu_offload()
+        elif offload_mode == "sequential_cpu_offload":
+            pipe.enable_sequential_cpu_offload()
         return pipe
 
     @classmethod

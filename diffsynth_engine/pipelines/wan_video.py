@@ -233,16 +233,18 @@ class WanVideoPipeline(BasePipeline):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_paths: str | WanModelConfig ,
+        model_path_or_config: str | WanModelConfig ,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         batch_cfg: bool = False,
-        cpu_offload: bool = True,
+        offload_mode: str | None = None,
     ) -> "WanVideoPipeline":
-        if isinstance(pretrained_model_paths, str):
-            model_config = WanModelConfig(model_path=pretrained_model_paths)
+        cls.validate_offload_mode(offload_mode)
+
+        if isinstance(model_path_or_config, str):
+            model_config = WanModelConfig(model_path=model_path_or_config)
         else:
-            model_config = pretrained_model_paths
+            model_config = model_path_or_config
 
         if model_config.vae_path is None:
             model_config.vae_path = fetch_modelscope_model("muse/wan2.1-vae", path="vae.safetensors")
@@ -267,7 +269,7 @@ class WanVideoPipeline(BasePipeline):
         logger.info(f"loading state dict from {model_config.vae_path} ...")
         vae_state_dict = load_file(model_config.vae_path, device="cpu")
 
-        init_device = "cpu" if cpu_offload else device
+        init_device = "cpu" if offload_mode else device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean='whitespace')
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
@@ -289,6 +291,8 @@ class WanVideoPipeline(BasePipeline):
             image_encoder=image_encoder,
             batch_cfg=batch_cfg,
         )
-        if cpu_offload:
+        if offload_mode == "cpu_offload":
             pipe.enable_cpu_offload()
+        elif offload_mode == "sequential_cpu_offload":
+            pipe.enable_sequential_cpu_offload()
         return pipe

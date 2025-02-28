@@ -6,6 +6,8 @@ from PIL import Image, ImageOps
 from einops import repeat
 from dataclasses import dataclass
 from safetensors.torch import load_file
+
+from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.gguf import load_gguf_checkpoint
 from diffsynth_engine.utils import logging
 
@@ -22,7 +24,7 @@ class BasePipeline:
         super().__init__()
         self.device = device
         self.dtype = dtype
-        self.cpu_offload = False
+        self.offload_mode = None
         self.model_names = []
 
     @classmethod
@@ -31,7 +33,7 @@ class BasePipeline:
         model_path_or_config: str | os.PathLike | ModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.float16,
-        cpu_offload: bool = False,
+        offload_mode: str | None = None,
     ) -> "BasePipeline":
         raise NotImplementedError()
 
@@ -135,26 +137,48 @@ class BasePipeline:
                 model.eval()
         return self
 
+    @staticmethod
+    def validate_offload_mode(offload_mode: str | None):
+        valid_offload_mode = (None, "cpu_offload", "sequential_cpu_offload")
+        if offload_mode not in valid_offload_mode:
+            raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
+
     def enable_cpu_offload(self):
-        self.cpu_offload = True
+        if self.device == "cpu":
+            logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
+            return
+        self.offload_mode = "cpu_offload"
+
+    def enable_sequential_cpu_offload(self):
+        if self.device == "cpu":
+            logger.warning("must set an non cpu device for pipeline before calling enable_sequential_cpu_offload")
+            return
+        for model_name in self.model_names:
+            model = getattr(self, model_name)
+            if model is not None:
+                enable_sequential_cpu_offload(model, self.device)
+        self.offload_mode = "sequential_cpu_offload"
 
     def load_models_to_device(self, load_model_names: List[str] | None = None):
         load_model_names = load_model_names if load_model_names else []
-        # only load models to device if cpu_offload is enabled
-        if not self.cpu_offload:
+        # only load models to device if offload_mode is set
+        if not self.offload_mode:
             return
+        if self.offload_mode == "sequential_cpu_offload":
+            # fresh the cuda cache
+            torch.cuda.empty_cache()
+            return
+
         # offload unnecessary models to cpu
         for model_name in self.model_names:
-            logger.info(f"Offloading model {model_name} to cpu")
             if model_name not in load_model_names:
                 model = getattr(self, model_name)
-                if model is not None and next(model.parameters()).device.type != "cpu":
+                if model is not None:
                     model.cpu()
         # load the needed models to device
         for model_name in load_model_names:
-            logger.info(f"Loading model {model_name} to device {self.device}")
             model = getattr(self, model_name)
-            if model is not None and next(model.parameters()).device.type != self.device:
+            if model is not None:
                 model.to(self.device)
         # fresh the cuda cache
         torch.cuda.empty_cache()

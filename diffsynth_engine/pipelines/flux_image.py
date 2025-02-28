@@ -234,11 +234,10 @@ class FluxImagePipeline(BasePipeline):
         model_path_or_config: str | os.PathLike | FluxModelConfig,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
-        cpu_offload: bool = False,
+        offload_mode: str | None = None,
     ) -> "FluxImagePipeline":
-        """
-        Init pipeline from one or several .safetensors files, assume there is no key conflict.
-        """
+        cls.validate_offload_mode(offload_mode)
+
         model_config = (
             model_path_or_config
             if isinstance(model_path_or_config, FluxModelConfig)
@@ -265,7 +264,7 @@ class FluxImagePipeline(BasePipeline):
         logger.info(f"loading state dict from {model_config.vae_path} ...")
         vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=dtype)
 
-        init_device = "cpu" if cpu_offload else device
+        init_device = "cpu" if offload_mode else device
         tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
         tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
@@ -290,8 +289,10 @@ class FluxImagePipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
-        if cpu_offload:
+        if offload_mode == "cpu_offload":
             pipe.enable_cpu_offload()
+        elif offload_mode == "sequential_cpu_offload":
+            pipe.enable_sequential_cpu_offload()
         return pipe
 
     def load_lora(self, path: str, scale: float, fused: bool = False, save_original_weight: bool = True):
