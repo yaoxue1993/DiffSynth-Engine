@@ -424,8 +424,7 @@ class FluxImagePipeline(BasePipeline):
         # Prepare scheduler
         if input_image is not None:
             total_steps = num_inference_steps
-            sigmas = torch.linspace(1.0, 1 / total_steps, total_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigmas=sigmas)
+            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigma_min=1 / total_steps, sigma_max=1.0)
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
             sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
             timesteps = timesteps[t_start - 1 :]
@@ -437,8 +436,7 @@ class FluxImagePipeline(BasePipeline):
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
-            sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigmas=sigmas)
+            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigma_min=1 / num_inference_steps, sigma_max=1.0)
             init_latents = latents.clone()
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps

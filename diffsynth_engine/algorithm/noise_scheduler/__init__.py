@@ -5,8 +5,8 @@ from .stable_diffusion.exponential import ExponentialScheduler
 from .stable_diffusion.ddim import DDIMScheduler
 from .stable_diffusion.sgm_uniform import SGMUniformScheduler
 from .flow_match.recifited_flow import RecifitedFlowScheduler
-from .flow_match.recifited_flow_ddim import RecifitedFlowDDIMScheduler
-from .flow_match.recifited_flow_beta import RecifitedFlowBetaScheduler
+from .flow_match.flow_ddim import FlowDDIMScheduler
+from .flow_match.flow_beta import FlowBetaScheduler
 
 __all__ = [
     "ScaledLinearScheduler",
@@ -16,6 +16,6 @@ __all__ = [
     "DDIMScheduler",
     "SGMUniformScheduler",
     "RecifitedFlowScheduler",
-    "RecifitedFlowDDIMScheduler",
-    "RecifitedFlowBetaScheduler",
+    "FlowDDIMScheduler",
+    "FlowBetaScheduler",
 ]

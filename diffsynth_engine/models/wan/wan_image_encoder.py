@@ -16,7 +16,7 @@ from .attention import attention
 
 class SelfAttention(nn.Module):
 
-    def __init__(self, dim, num_heads, dropout=0.1, eps=1e-5):
+    def __init__(self, dim, num_heads, dropout=0.0, eps=1e-5):
         assert dim % num_heads == 0
         super().__init__()
         self.dim = dim
@@ -55,7 +55,7 @@ class SelfAttention(nn.Module):
 
 class AttentionBlock(nn.Module):
 
-    def __init__(self, dim, num_heads, post_norm, dropout=0.1, eps=1e-5):
+    def __init__(self, dim, num_heads, post_norm, dropout=0.0, eps=1e-5):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -94,7 +94,7 @@ class XLMRoberta(nn.Module):
                  num_heads=16,
                  num_layers=24,
                  post_norm=True,
-                 dropout=0.1,
+                 dropout=0.0,
                  eps=1e-5):
         super().__init__()
         self.vocab_size = vocab_size
@@ -167,7 +167,7 @@ def xlm_roberta_large(pretrained=False,
         num_heads=16,
         num_layers=24,
         post_norm=True,
-        dropout=0.1,
+        dropout=0.0,
         eps=1e-5)
     cfg.update(**kwargs)
 
@@ -668,7 +668,7 @@ class XLMRobertaCLIP(nn.Module):
                  text_heads=16,
                  text_layers=24,
                  text_post_norm=True,
-                 text_dropout=0.1,
+                 text_dropout=0.0,
                  attn_dropout=0.0,
                  proj_dropout=0.0,
                  embedding_dropout=0.0,
@@ -848,7 +848,7 @@ def clip_xlm_roberta_vit_h_14(
         text_heads=16,
         text_layers=24,
         text_post_norm=True,
-        text_dropout=0.1,
+        text_dropout=0.0,
         attn_dropout=0.0,
         proj_dropout=0.0,
         embedding_dropout=0.0)

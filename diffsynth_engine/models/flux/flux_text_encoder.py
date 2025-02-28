@@ -79,7 +79,7 @@ class FluxTextEncoder2(T5EncoderModel):
             num_heads=64,
             relative_attention_num_buckets=32,
             relative_attention_max_distance=128,
-            dropout_rate=0.1,
+            dropout_rate=0.0,
             eps=1e-6,
             device=device,
             dtype=dtype,

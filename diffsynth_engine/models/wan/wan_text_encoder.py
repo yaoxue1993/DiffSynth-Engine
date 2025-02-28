@@ -38,7 +38,7 @@ class T5LayerNorm(nn.Module):
 
 class T5Attention(nn.Module):
 
-    def __init__(self, dim, dim_attn, num_heads, dropout=0.1):
+    def __init__(self, dim, dim_attn, num_heads, dropout=0.0):
         assert dim_attn % num_heads == 0
         super(T5Attention, self).__init__()
         self.dim = dim
@@ -92,7 +92,7 @@ class T5Attention(nn.Module):
 
 class T5FeedForward(nn.Module):
 
-    def __init__(self, dim, dim_ffn, dropout=0.1):
+    def __init__(self, dim, dim_ffn, dropout=0.0):
         super(T5FeedForward, self).__init__()
         self.dim = dim
         self.dim_ffn = dim_ffn
@@ -120,7 +120,7 @@ class T5SelfAttention(nn.Module):
                  num_heads,
                  num_buckets,
                  shared_pos=True,
-                 dropout=0.1):
+                 dropout=0.0):
         super(T5SelfAttention, self).__init__()
         self.dim = dim
         self.dim_attn = dim_attn
@@ -231,7 +231,7 @@ class WanTextEncoder(PreTrainedModel):
         num_layers=24,
         num_buckets=32,
         shared_pos=False,
-        dropout=0.1,
+        dropout=0.,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16                 
     ):

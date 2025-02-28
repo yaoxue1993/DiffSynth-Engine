@@ -1,5 +1,5 @@
 from .recifited_flow import RecifitedFlowScheduler
-from .recifited_flow_ddim import RecifitedFlowDDIMScheduler
-from .recifited_flow_beta import RecifitedFlowBetaScheduler
+from .flow_ddim import FlowDDIMScheduler
+from .flow_beta import FlowBetaScheduler
 
-__all__ = ["RecifitedFlowScheduler", "RecifitedFlowDDIMScheduler", "RecifitedFlowBetaScheduler"]
+__all__ = ["RecifitedFlowScheduler", "FlowDDIMScheduler", "FlowBetaScheduler"]

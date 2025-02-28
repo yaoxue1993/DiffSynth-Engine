@@ -5,20 +5,18 @@ from diffsynth_engine.algorithm.noise_scheduler.base_scheduler import append_zer
 
 
 class RecifitedFlowScheduler(BaseScheduler):
-    def __init__(self, shift=1.0, sigma_min=None, num_train_timesteps=1000, use_dynamic_shifting=False):
-        self.pseudo_timestep_range = 10000
-        self.num_train_timesteps = num_train_timesteps
+    def __init__(self, 
+        shift=1.0, 
+        sigma_min=0.001, 
+        sigma_max=1.0,
+        num_train_timesteps=1000, 
+        use_dynamic_shifting=False,
+    ):
         self.shift = shift
-        if sigma_min is None:
-            self.sigma_min = 1 / num_train_timesteps
-        else:
-            self.sigma_min = sigma_min
-        self.sigma_max = 1
-        self.use_dynamic_shifting = use_dynamic_shifting
-        if not self.use_dynamic_shifting:
-            # SD3/SD3.5
-            self.sigma_min = self.shift * self.sigma_min / (1 + (self.shift - 1) * self.sigma_min)
-            # self.sigma_max = 1
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.num_train_timesteps = num_train_timesteps        
+        self.use_dynamic_shifting = use_dynamic_shifting        
 
     def _sigma_to_t(self, sigma):
         return sigma * self.num_train_timesteps
@@ -29,19 +27,22 @@ class RecifitedFlowScheduler(BaseScheduler):
     def _time_shift(self, mu: float, sigma: float, t: torch.Tensor):
         return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
 
-    def schedule(self, num_inference_steps: int, mu: float | None = None, sigmas: torch.Tensor | None = None):
-        if sigmas is None:
-            timesteps = torch.linspace(
-                self._sigma_to_t(self.sigma_max), self._sigma_to_t(self.sigma_min), num_inference_steps
-            )
-            sigmas = timesteps / self.num_train_timesteps
+    def _shift_sigma(self, sigma: torch.Tensor, shift: float):
+        return shift * sigma / (1 + (shift - 1) * sigma)
+
+    def schedule(self, 
+                 num_inference_steps: int, 
+                 mu: float | None = None, 
+                 sigma_min: float | None = None, 
+                 sigma_max: float | None = None
+    ):
+        sigma_min = self.sigma_min if sigma_min is None else sigma_min
+        sigma_max = self.sigma_max if sigma_max is None else sigma_max        
+        sigmas = torch.linspace(sigma_max, sigma_min, num_inference_steps)
         if self.use_dynamic_shifting:
-            # FLUX
-            sigmas = self._time_shift(mu, 1.0, sigmas)
+            sigmas = self._time_shift(mu, 1.0, sigmas)            # FLUX
         else:
-            # SD3/SD3.5
-            sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
+            sigmas = self._shift_sigma(sigmas, self.shift)
         timesteps = sigmas * self.num_train_timesteps
         sigmas = append_zero(sigmas)
-
         return sigmas, timesteps

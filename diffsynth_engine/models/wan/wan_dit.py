@@ -34,11 +34,11 @@ def rope_params(max_seq_len, dim, theta=10000):
 
 @torch.autocast(enabled=False, device_type="cuda")
 def rope_apply(x, grid_sizes, freqs):
+    dtype = x.dtype
     n, c = x.size(2), x.size(3) // 2
 
     # split freqs
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
-
     # loop over samples
     output = []
     for i, (f, h, w) in enumerate(grid_sizes.tolist()):
@@ -60,7 +60,7 @@ def rope_apply(x, grid_sizes, freqs):
 
         # append to collection
         output.append(x_i)
-    return torch.stack(output)
+    return torch.stack(output).to(dtype)
 
 
 class WanRMSNorm(nn.Module):
@@ -130,7 +130,7 @@ class WanSelfAttention(nn.Module):
             v=v,
             k_lens=seq_lens,
             window_size=self.window_size)
-
+        
         # output
         x = x.flatten(2)
         x = self.o(x)
@@ -283,6 +283,7 @@ class WanAttentionBlock(nn.Module):
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
+        x.to(dtype=dtype)
         return x
 
 

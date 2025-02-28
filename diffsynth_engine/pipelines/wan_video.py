@@ -68,7 +68,7 @@ class WanVideoPipeline(BasePipeline):
         dtype=torch.bfloat16, 
     ):
         super().__init__(device=device, dtype=dtype)
-        self.noise_scheduler = RecifitedFlowScheduler(shift=5, sigma_min=0.0)        
+        self.noise_scheduler = RecifitedFlowScheduler(shift=5.0, sigma_min=0.001, sigma_max=0.999)
         self.sampler = FlowMatchEulerSampler()
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
@@ -247,8 +247,7 @@ class WanVideoPipeline(BasePipeline):
         # Initialize noise
         noise = self.generate_noise((1, 16, (num_frames - 1) // 4 + 1, height//8, width//8), seed=seed, device='cpu', dtype=torch.float32).to(self.device)
         init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, input_video, denoising_strength, num_inference_steps, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)        
-    
+        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
         # Encode prompts
         self.load_models_to_device(["text_encoder"])
         prompt_emb_posi = self.encode_prompt(prompt)
@@ -329,14 +328,18 @@ class WanVideoPipeline(BasePipeline):
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean='whitespace')
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype).to(dtype=model_config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype).to(dtype=model_config.vae_dtype)
+        vae.eval()
+        text_encoder.eval()
         image_encoder = None        
         if model_config.image_encoder_path is not None:
             logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
             image_encoder_state_dict = load_file(model_config.image_encoder_path, device="cpu")
             image_encoder = WanImageEncoder.from_state_dict(image_encoder_state_dict, device=init_device, dtype=model_config.image_encoder_dtype).to(dtype=model_config.image_encoder_dtype)
-        
+            image_encoder.eval()
+
         with LoRAContext():
             dit = WanDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype).to(dtype=model_config.dit_dtype)
+            dit.eval()
 
         pipe = cls(
             config=model_config,
