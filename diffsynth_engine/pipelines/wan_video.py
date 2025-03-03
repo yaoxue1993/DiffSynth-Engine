@@ -9,11 +9,12 @@ from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_modelscope_model
 from diffsynth_engine.models.basic.lora import LoRAContext, LoRALinear, LoRAConv2d
 from diffsynth_engine.models.base import LoRAStateDictConverter
+from diffsynth_engine.utils.loader import load_file
 from .base import BasePipeline
 from einops import rearrange
 from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
-from safetensors.torch import load_file
+
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
@@ -314,7 +315,6 @@ class WanVideoPipeline(BasePipeline):
         assert os.path.isfile(model_config.model_path), f"{model_config.model_path} is not a file"        
         assert os.path.isfile(model_config.vae_path), f"{model_config.vae_path} is not a file"
         assert os.path.isfile(model_config.t5_path), f"{model_config.t5_path} is not a file"
-
         logger.info(f"loading state dict from {model_config.model_path} ...")
         dit_state_dict = load_file(model_config.model_path, device="cpu")
 
@@ -325,7 +325,7 @@ class WanVideoPipeline(BasePipeline):
         vae_state_dict = load_file(model_config.vae_path, device="cpu")
 
         init_device = "cpu" if offload_mode else device
-        tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean='whitespace')
+        tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean='whitespace')        
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype).to(dtype=model_config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype).to(dtype=model_config.vae_dtype)
         vae.eval()
