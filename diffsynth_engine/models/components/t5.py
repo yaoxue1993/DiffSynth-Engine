@@ -7,6 +7,7 @@ from diffsynth_engine.models.basic.relative_position_emb import RelativePosition
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm, NewGELUActivation
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.gguf import gguf_inference
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -193,22 +194,23 @@ class T5EncoderModel(PreTrainedModel):
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, input_ids: torch.LongTensor, attention_mask: Optional[torch.FloatTensor] = None):
-        inputs_embeds = self.token_embedding(input_ids)
-        hidden_states = self.dropout(inputs_embeds)
-        seq_len = hidden_states.shape[1]
-        position_bias = self.relative_position_embedding(seq_len, seq_len)
-        if attention_mask is not None:
-            causal_mask = attention_mask[:, None, None, :]
-            causal_mask = causal_mask.to(dtype=inputs_embeds.dtype)
-            causal_mask = (1.0 - causal_mask) * torch.finfo(inputs_embeds.dtype).min
-            attention_mask = causal_mask + position_bias
-        else:
-            attention_mask = position_bias
-        for layer_module in self.encoders:
-            hidden_states = layer_module(hidden_states, attention_mask=attention_mask)
-        hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        return hidden_states
+        with gguf_inference():
+            inputs_embeds = self.token_embedding(input_ids)
+            hidden_states = self.dropout(inputs_embeds)
+            seq_len = hidden_states.shape[1]
+            position_bias = self.relative_position_embedding(seq_len, seq_len)
+            if attention_mask is not None:
+                causal_mask = attention_mask[:, None, None, :]
+                causal_mask = causal_mask.to(dtype=inputs_embeds.dtype)
+                causal_mask = (1.0 - causal_mask) * torch.finfo(inputs_embeds.dtype).min
+                attention_mask = causal_mask + position_bias
+            else:
+                attention_mask = position_bias
+            for layer_module in self.encoders:
+                hidden_states = layer_module(hidden_states, attention_mask=attention_mask)
+            hidden_states = self.final_layer_norm(hidden_states)
+            hidden_states = self.dropout(hidden_states)
+            return hidden_states
 
     @classmethod
     def from_state_dict(cls, state_dict: Dict[str, torch.Tensor], device: str, dtype: torch.dtype, **kwargs):

@@ -335,6 +335,7 @@ class SDImagePipeline(BasePipeline):
     ):
         if input_image is not None:
             width, height = input_image.size
+        self.validate_image_size(height, width, minimum=64, multiple_of=8)
         noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
         init_latents, latents, sigmas, timesteps = self.prepare_latents(

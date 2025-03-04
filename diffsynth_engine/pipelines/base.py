@@ -56,6 +56,21 @@ class BasePipeline:
         raise ValueError(f"{checkpoint_path} is not a .safetensors or .gguf file")
 
     @staticmethod
+    def validate_image_size(
+        height: int,
+        width: int,
+        minimum: int | None = None,
+        maximum: int | None = None,
+        multiple_of: int | None = None,
+    ):
+        if minimum is not None and (height < minimum or width < minimum):
+            raise ValueError(f"expects height and width not less than {minimum}")
+        if maximum is not None and (height > maximum or width > maximum):
+            raise ValueError(f"expects height and width not greater than {maximum}")
+        if height % multiple_of != 0 or width % multiple_of != 0:
+            raise ValueError(f"expects height and width to be multiples of {multiple_of}")
+
+    @staticmethod
     def preprocess_image(image: Image.Image) -> torch.Tensor:
         image_array = np.array(image, dtype=np.float32)
         if len(image_array.shape) == 2:
@@ -137,6 +152,9 @@ class BasePipeline:
                 model.eval()
         return self
 
+    def enable_fp8_linear(self):
+        raise NotImplementedError()
+
     @staticmethod
     def validate_offload_mode(offload_mode: str | None):
         valid_offload_mode = (None, "cpu_offload", "sequential_cpu_offload")
@@ -144,12 +162,14 @@ class BasePipeline:
             raise ValueError(f"offload_mode must be one of {valid_offload_mode}, but got {offload_mode}")
 
     def enable_cpu_offload(self):
-
+        if self.device == "cpu":
+            logger.warning("must set an non cpu device for pipeline before calling enable_cpu_offload")
+            return
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
                 model.to("cpu")
-        self.cpu_offload = True
+        self.offload_mode = "cpu_offload"
 
     def enable_sequential_cpu_offload(self):
         if self.device == "cpu":
@@ -158,9 +178,9 @@ class BasePipeline:
         for model_name in self.model_names:
             model = getattr(self, model_name)
             if model is not None:
+                model.to("cpu")
                 enable_sequential_cpu_offload(model, self.device)
         self.offload_mode = "sequential_cpu_offload"
-
 
     def load_models_to_device(self, load_model_names: List[str] | None = None):
         load_model_names = load_model_names if load_model_names else []

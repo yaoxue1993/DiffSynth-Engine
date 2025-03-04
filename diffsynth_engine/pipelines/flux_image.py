@@ -25,7 +25,7 @@ from diffsynth_engine.algorithm.noise_scheduler import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
 from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TOKENIZER_2_CONF_PATH
 from diffsynth_engine.utils import logging
-from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 
 logger = logging.get_logger(__name__)
@@ -424,7 +424,9 @@ class FluxImagePipeline(BasePipeline):
         # Prepare scheduler
         if input_image is not None:
             total_steps = num_inference_steps
-            sigmas, timesteps = self.noise_scheduler.schedule(total_steps, mu=mu, sigma_min=1 / total_steps, sigma_max=1.0)
+            sigmas, timesteps = self.noise_scheduler.schedule(
+                total_steps, mu=mu, sigma_min=1 / total_steps, sigma_max=1.0
+            )
             t_start = max(total_steps - int(num_inference_steps * denoising_strength), 1)
             sigma_start, sigmas = sigmas[t_start - 1], sigmas[t_start - 1 :]
             timesteps = timesteps[t_start - 1 :]
@@ -436,12 +438,16 @@ class FluxImagePipeline(BasePipeline):
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:
-            sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps, mu=mu, sigma_min=1 / num_inference_steps, sigma_max=1.0)
+            sigmas, timesteps = self.noise_scheduler.schedule(
+                num_inference_steps, mu=mu, sigma_min=1 / num_inference_steps, sigma_max=1.0
+            )
             init_latents = latents.clone()
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
 
-    @gguf_inference()
+    def enable_fp8_linear(self):
+        enable_fp8_linear(self.dit)
+
     @torch.no_grad()
     def __call__(
         self,
@@ -464,6 +470,7 @@ class FluxImagePipeline(BasePipeline):
     ):
         if input_image is not None:
             width, height = input_image.size
+        self.validate_image_size(height, width, minimum=64, multiple_of=16)
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )

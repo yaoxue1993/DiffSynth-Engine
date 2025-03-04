@@ -9,6 +9,8 @@ from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils.fp8_linear import fp8_inference
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
 from diffsynth_engine.utils import logging
 
@@ -437,62 +439,64 @@ class FluxDiT(PreTrainedModel):
                 **kwargs,
             )
 
-        if image_ids is None:
-            image_ids = self.prepare_image_ids(hidden_states)
+        fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
+        with fp8_inference(fp8_linear_enabled), gguf_inference():
+            if image_ids is None:
+                image_ids = self.prepare_image_ids(hidden_states)
 
-        # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
-        # addition of floating point numbers does not meet commutative law
-        conditioning = self.time_embedder(timestep, hidden_states.dtype)
-        if self.guidance_embedder is not None:
-            guidance = guidance * 1000
-            conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
-        conditioning += self.pooled_text_embedder(pooled_prompt_emb)
-        prompt_emb = self.context_embedder(prompt_emb)
-        image_rotary_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
+            # warning: keep the order of time_embedding + guidance_embedding + pooled_text_embedding
+            # addition of floating point numbers does not meet commutative law
+            conditioning = self.time_embedder(timestep, hidden_states.dtype)
+            if self.guidance_embedder is not None:
+                guidance = guidance * 1000
+                conditioning += self.guidance_embedder(guidance, hidden_states.dtype)
+            conditioning += self.pooled_text_embedder(pooled_prompt_emb)
+            prompt_emb = self.context_embedder(prompt_emb)
+            image_rotary_emb = self.pos_embedder(torch.cat((text_ids, image_ids), dim=1))
 
-        height, width = hidden_states.shape[-2:]
-        hidden_states = self.patchify(hidden_states)
-        hidden_states = self.x_embedder(hidden_states)
+            height, width = hidden_states.shape[-2:]
+            hidden_states = self.patchify(hidden_states)
+            hidden_states = self.x_embedder(hidden_states)
 
-        def create_custom_forward(module):
-            def custom_forward(*inputs):
-                return module(*inputs)
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    return module(*inputs)
 
-            return custom_forward
+                return custom_forward
 
-        for block in self.blocks:
-            if self.training and use_gradient_checkpointing:
-                hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    prompt_emb,
-                    conditioning,
-                    image_rotary_emb,
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+            for block in self.blocks:
+                if self.training and use_gradient_checkpointing:
+                    hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(block),
+                        hidden_states,
+                        prompt_emb,
+                        conditioning,
+                        image_rotary_emb,
+                        use_reentrant=False,
+                    )
+                else:
+                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
 
-        hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
-        for block in self.single_blocks:
-            if self.training and use_gradient_checkpointing:
-                hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    prompt_emb,
-                    conditioning,
-                    image_rotary_emb,
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-        hidden_states = hidden_states[:, prompt_emb.shape[1] :]
+            hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
+            for block in self.single_blocks:
+                if self.training and use_gradient_checkpointing:
+                    hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(block),
+                        hidden_states,
+                        prompt_emb,
+                        conditioning,
+                        image_rotary_emb,
+                        use_reentrant=False,
+                    )
+                else:
+                    hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
 
-        hidden_states = self.final_norm_out(hidden_states, conditioning)
-        hidden_states = self.final_proj_out(hidden_states)
-        hidden_states = self.unpatchify(hidden_states, height, width)
+            hidden_states = self.final_norm_out(hidden_states, conditioning)
+            hidden_states = self.final_proj_out(hidden_states)
+            hidden_states = self.unpatchify(hidden_states, height, width)
 
-        return hidden_states
+            return hidden_states
 
     @classmethod
     def from_state_dict(
@@ -506,7 +510,7 @@ class FluxDiT(PreTrainedModel):
             model = torch.nn.utils.skip_init(
                 cls, device=device, dtype=dtype, disable_guidance_embedder=disable_guidance_embedder
             )
-            model = model.requires_grad_(False) # for loading gguf
+            model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model

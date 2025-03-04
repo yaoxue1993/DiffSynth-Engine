@@ -28,7 +28,7 @@ def add_cpu_offload_hook(module: nn.Module, device: str = "cuda:0"):
         offload_params = {}
         for name, param in module.named_parameters():
             offload_params[name] = param.data
-            param.data = param.data.to(device=device, non_blocking=True)
+            param.data = param.data.to(device=device)
         setattr(module, "_offload_params", offload_params)
 
     def _forward_hook(module: nn.Module, input, output):
