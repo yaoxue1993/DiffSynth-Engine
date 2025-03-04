@@ -246,7 +246,7 @@ class SDXLUNet(PreTrainedModel):
 
         self.is_kolors = is_kolors
 
-    def forward(self, x, timestep, context, y, tiled=False, tile_size=64, tile_stride=8, **kwargs):
+    def forward(self, x, timestep, context, y, **kwargs):
         # 1. time embedding
         t_emb = self.time_embedding(timestep, dtype=x.dtype)
         ## add embedding
@@ -286,9 +286,6 @@ class SDXLUNet(PreTrainedModel):
                     time_emb,
                     text_emb,
                     res_stack,
-                    tiled=tiled,
-                    tile_size=tile_size,
-                    tile_stride=tile_stride,
                 )
 
         # 4. output

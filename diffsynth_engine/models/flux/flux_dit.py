@@ -5,7 +5,6 @@ from typing import Dict
 from einops import rearrange
 
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm, AdaLayerNormSingle, RoPEEmbedding, RMSNorm
-from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
@@ -388,29 +387,6 @@ class FluxDiT(PreTrainedModel):
 
         return latent_image_ids
 
-    def tiled_forward(
-        self,
-        hidden_states,
-        timestep,
-        prompt_emb,
-        pooled_prompt_emb,
-        guidance,
-        text_ids,
-        tile_size=128,
-        tile_stride=64,
-        **kwargs,
-    ):
-        # Due to the global positional embedding, we cannot implement layer-wise tiled forward.
-        hidden_states = TileWorker().tiled_forward(
-            lambda x: self.forward(x, timestep, prompt_emb, pooled_prompt_emb, guidance, text_ids, image_ids=None),
-            hidden_states,
-            tile_size,
-            tile_stride,
-            tile_device=hidden_states.device,
-            tile_dtype=hidden_states.dtype,
-        )
-        return hidden_states
-
     def forward(
         self,
         hidden_states,
@@ -420,25 +396,9 @@ class FluxDiT(PreTrainedModel):
         guidance,
         text_ids,
         image_ids=None,
-        tiled=False,
-        tile_size=128,
-        tile_stride=64,
         use_gradient_checkpointing=False,
         **kwargs,
     ):
-        if tiled:
-            return self.tiled_forward(
-                hidden_states,
-                timestep,
-                prompt_emb,
-                pooled_prompt_emb,
-                guidance,
-                text_ids,
-                tile_size=tile_size,
-                tile_stride=tile_stride,
-                **kwargs,
-            )
-
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
         with fp8_inference(fp8_linear_enabled), gguf_inference():
             if image_ids is None:

@@ -3,11 +3,9 @@ import json
 import torch
 import torch.nn as nn
 from typing import Dict
-from einops import rearrange
 
 from diffsynth_engine.models.basic.attention import Attention
 from diffsynth_engine.models.basic.unet_helper import ResnetBlock, UpSampler, DownSampler
-from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import VAE_CONFIG_FILE
@@ -168,23 +166,11 @@ class VAEDecoder(PreTrainedModel):
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(128, 3, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-    def _tiled_forward(self, sample, tile_size=64, tile_stride=32):
-        hidden_states = TileWorker().tiled_forward(
-            lambda x: self.forward(x),
-            sample,
-            tile_size,
-            tile_stride,
-            tile_device=sample.device,
-            tile_dtype=sample.dtype,
-        )
-        return hidden_states
-
     def forward(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         original_dtype = sample.dtype
         sample = sample.to(dtype=next(iter(self.parameters())).dtype)
-        # For VAE Decoder, we do not need to apply the tiler on each layer.
         if tiled:
-            return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
+            raise NotImplementedError()
 
         # 1. pre-process
         sample = sample / self.scaling_factor + self.shift_factor
@@ -287,23 +273,11 @@ class VAEEncoder(PreTrainedModel):
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(512, 2 * latent_channels, kernel_size=3, padding=1, device=device, dtype=dtype)
 
-    def _tiled_forward(self, sample, tile_size=64, tile_stride=32):
-        hidden_states = TileWorker().tiled_forward(
-            lambda x: self.forward(x),
-            sample,
-            tile_size,
-            tile_stride,
-            tile_device=sample.device,
-            tile_dtype=sample.dtype,
-        )
-        return hidden_states
-
     def forward(self, sample, tiled=False, tile_size=64, tile_stride=32, **kwargs):
         original_dtype = sample.dtype
         sample = sample.to(dtype=next(iter(self.parameters())).dtype)
-        # For VAE Decoder, we do not need to apply the tiler on each layer.
         if tiled:
-            return self._tiled_forward(sample, tile_size=tile_size, tile_stride=tile_stride)
+            raise NotImplementedError()
 
         # 1. pre-process
         hidden_states = self.conv_in(sample)
@@ -324,22 +298,6 @@ class VAEEncoder(PreTrainedModel):
         hidden_states = hidden_states[:, : self.latent_channels]
         hidden_states = (hidden_states - self.shift_factor) * self.scaling_factor
         hidden_states = hidden_states.to(original_dtype)
-        return hidden_states
-
-    def encode_video(self, sample, batch_size=8):
-        B = sample.shape[0]
-        hidden_states = []
-
-        for i in range(0, sample.shape[2], batch_size):
-            j = min(i + batch_size, sample.shape[2])
-            sample_batch = rearrange(sample[:, :, i:j], "B C T H W -> (B T) C H W")
-
-            hidden_states_batch = self(sample_batch)
-            hidden_states_batch = rearrange(hidden_states_batch, "(B T) C H W -> B C T H W", B=B)
-
-            hidden_states.append(hidden_states_batch)
-
-        hidden_states = torch.concat(hidden_states, dim=2)
         return hidden_states
 
     @classmethod

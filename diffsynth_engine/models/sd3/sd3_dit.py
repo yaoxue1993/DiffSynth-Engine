@@ -6,7 +6,6 @@ from einops import rearrange
 
 from diffsynth_engine.models.basic.timestep import TimestepEmbeddings
 from diffsynth_engine.models.basic.transformer_helper import AdaLayerNorm
-from diffsynth_engine.models.basic.tiler import TileWorker
 from diffsynth_engine.models.base import PreTrainedModel, StateDictConverter
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import SD3_DIT_CONFIG_FILE
@@ -255,31 +254,14 @@ class SD3DiT(PreTrainedModel):
         self.norm_out = AdaLayerNorm(1536, single=True, device=device, dtype=dtype)
         self.proj_out = nn.Linear(1536, 64, device=device, dtype=dtype)
 
-    def tiled_forward(self, hidden_states, timestep, prompt_emb, pooled_prompt_emb, tile_size=128, tile_stride=64):
-        # Due to the global positional embedding, we cannot implement layer-wise tiled forward.
-        hidden_states = TileWorker().tiled_forward(
-            lambda x: self.forward(x, timestep, prompt_emb, pooled_prompt_emb),
-            hidden_states,
-            tile_size,
-            tile_stride,
-            tile_device=hidden_states.device,
-            tile_dtype=hidden_states.dtype,
-        )
-        return hidden_states
-
     def forward(
         self,
         hidden_states,
         timestep,
         prompt_emb,
         pooled_prompt_emb,
-        tiled=False,
-        tile_size=128,
-        tile_stride=64,
         use_gradient_checkpointing=False,
     ):
-        if tiled:
-            return self.tiled_forward(hidden_states, timestep, prompt_emb, pooled_prompt_emb, tile_size, tile_stride)
         conditioning = self.time_embedder(timestep, hidden_states.dtype) + self.pooled_text_embedder(pooled_prompt_emb)
         prompt_emb = self.context_embedder(prompt_emb)
 

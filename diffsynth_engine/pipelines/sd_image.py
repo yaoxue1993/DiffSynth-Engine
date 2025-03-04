@@ -339,7 +339,7 @@ class SDImagePipeline(BasePipeline):
         noise = self.generate_noise((1, 4, height // 8, width // 8), seed=seed, device=self.device, dtype=self.dtype)
 
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
-            noise, input_image, denoising_strength, num_inference_steps
+            noise, input_image, denoising_strength, num_inference_steps, tiled, tile_size, tile_stride
         )
         mask, overlay_image = None, None
         if mask_image is not None:

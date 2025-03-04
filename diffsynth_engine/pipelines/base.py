@@ -121,7 +121,16 @@ class BasePipeline:
         # overlay_image: [1, 4, H, W]  = mask_image[1, 1, H, W] + input_image[1, 3, H, W]
         return mask, overlay_image
 
-    def prepare_latents(self, latents, input_image, denoising_strength, num_inference_steps):
+    def prepare_latents(
+        self,
+        latents: torch.Tensor,
+        input_image: Image.Image,
+        denoising_strength: float,
+        num_inference_steps: int,
+        tiled: bool = False,
+        tile_size: int = 64,
+        tile_stride: int = 32,
+    ):
         # Prepare scheduler
         if input_image is not None:
             total_steps = num_inference_steps
@@ -133,7 +142,7 @@ class BasePipeline:
             self.load_models_to_device(["vae_encoder"])
             noise = latents
             image = self.preprocess_image(input_image).to(device=self.device, dtype=self.dtype)
-            latents = self.encode_image(image)
+            latents = self.encode_image(image, tiled, tile_size, tile_stride)
             init_latents = latents.clone()
             latents = self.sampler.add_noise(latents, noise, sigma_start)
         else:

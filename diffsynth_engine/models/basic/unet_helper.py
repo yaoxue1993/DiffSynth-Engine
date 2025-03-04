@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from diffsynth_engine.models.basic.attention import Attention
-from diffsynth_engine.models.basic.tiler import TileWorker
 
 
 class GEGLU(nn.Module):
@@ -192,9 +191,6 @@ class AttentionBlock(nn.Module):
         text_emb,
         res_stack,
         cross_frame_attention=False,
-        tiled=False,
-        tile_size=64,
-        tile_stride=32,
         **kwargs,
     ):
         batch, _, height, width = hidden_states.shape
@@ -213,30 +209,9 @@ class AttentionBlock(nn.Module):
             if encoder_hidden_states.shape[0] != hidden_states.shape[0]:
                 encoder_hidden_states = encoder_hidden_states.repeat(hidden_states.shape[0], 1, 1)
 
-        if tiled:
-            tile_size = min(tile_size, min(height, width))
-            hidden_states = hidden_states.permute(0, 2, 1).reshape(batch, inner_dim, height, width)
+        for block_id, block in enumerate(self.transformer_blocks):
+            hidden_states = block(hidden_states, encoder_hidden_states=encoder_hidden_states)
 
-            def block_tile_forward(x):
-                b, c, h, w = x.shape
-                x = x.permute(0, 2, 3, 1).reshape(b, h * w, c)
-                x = block(x, encoder_hidden_states)
-                x = x.reshape(b, h, w, c).permute(0, 3, 1, 2)
-                return x
-
-            for block in self.transformer_blocks:
-                hidden_states = TileWorker().tiled_forward(
-                    block_tile_forward,
-                    hidden_states,
-                    tile_size,
-                    tile_stride,
-                    tile_device=hidden_states.device,
-                    tile_dtype=hidden_states.dtype,
-                )
-            hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * width, inner_dim)
-        else:
-            for block_id, block in enumerate(self.transformer_blocks):
-                hidden_states = block(hidden_states, encoder_hidden_states=encoder_hidden_states)
         if cross_frame_attention:
             hidden_states = hidden_states.reshape(batch, height * width, inner_dim)
 
