@@ -9,6 +9,5 @@
     "out_dim": 16,
     "num_heads": 40,
     "num_layers": 40,
-    "window_size": [-1, -1],
     "eps": 1e-6
 }
