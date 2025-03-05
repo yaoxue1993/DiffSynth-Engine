@@ -1,6 +1,10 @@
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
-from diffsynth_engine.models.wan.wan_dit import WanDiT
+import os
+if os.environ.get("WAN_OLD", "0") == "1":
+    from diffsynth_engine.models.wan.wan_dit_old import WanDiT
+else:
+    from diffsynth_engine.models.wan.wan_dit import WanDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.models.wan.wan_image_encoder import WanImageEncoder
@@ -21,6 +25,21 @@ import numpy as np
 import torch
 import logging
 import os
+
+def make_deterministic(seed=42):
+    import random
+    import numpy as np
+    import torch
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+make_deterministic()
+
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +140,9 @@ class WanVideoPipeline(BasePipeline):
     def encode_prompt(self, prompt):
         ids, mask = self.tokenizer(prompt, return_mask=True, add_special_tokens=True)
         ids = ids.to(self.device)
-        mask = mask.to(self.device)
-        seq_lens = mask.gt(0).sum(dim=1).long()
+        mask = mask.to(self.device)        
         prompt_emb = self.text_encoder(ids, mask)
-        prompt_emb = [u[:v] for u, v in zip(prompt_emb, seq_lens)]
+        prompt_emb = prompt_emb.masked_fill(mask.unsqueeze(-1).expand_as(prompt_emb)==0, 0)
         return prompt_emb
         
     def encode_image(self, image, num_frames, height, width):    
@@ -192,14 +210,13 @@ class WanVideoPipeline(BasePipeline):
             return noise_pred
 
     def predict_noise(self, latents, image_emb, timestep, context):        
-        seq_len = latents.shape[2] * latents.shape[3] * latents.shape[4] // 4 # b c f h w -> b (f*h*w / (patch_size * patch_size)) c 
         latents = latents.to(dtype=self.config.dit_dtype, device=self.device)
+        
         noise_pred = self.dit(
             x=latents,
             timestep=timestep,
             context=context,
-            seq_len=seq_len,
-            clip_fea=image_emb.get("clip_fea", None),
+            clip_feature=image_emb.get("clip_fea", None),
             y=image_emb.get("y", None),
         )
         return noise_pred
@@ -328,18 +345,14 @@ class WanVideoPipeline(BasePipeline):
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean='whitespace')        
         text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype).to(dtype=model_config.t5_dtype)
         vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype).to(dtype=model_config.vae_dtype)
-        vae.eval()
-        text_encoder.eval()
         image_encoder = None        
         if model_config.image_encoder_path is not None:
             logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
             image_encoder_state_dict = load_file(model_config.image_encoder_path, device="cpu")
             image_encoder = WanImageEncoder.from_state_dict(image_encoder_state_dict, device=init_device, dtype=model_config.image_encoder_dtype).to(dtype=model_config.image_encoder_dtype)
-            image_encoder.eval()
 
         with LoRAContext():
             dit = WanDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype).to(dtype=model_config.dit_dtype)
-            dit.eval()
 
         pipe = cls(
             config=model_config,
@@ -352,6 +365,7 @@ class WanVideoPipeline(BasePipeline):
             device=device,
             dtype=dtype,
         )
+        pipe.eval()
         if offload_mode == "cpu_offload":
             pipe.enable_cpu_offload()
         elif offload_mode == "sequential_cpu_offload":

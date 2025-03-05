@@ -1,7 +1,6 @@
 {
-    "model_type": "t2v",
+    "has_image_input": false,
     "patch_size": [1, 2, 2],
-    "text_len": 512,
     "in_dim": 16,
     "dim": 5120,
     "ffn_dim": 13824,
@@ -11,7 +10,5 @@
     "num_heads": 40,
     "num_layers": 40,
     "window_size": [-1, -1],
-    "qk_norm": true,
-    "cross_attn_norm": true,
     "eps": 1e-6
 }
