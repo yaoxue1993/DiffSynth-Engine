@@ -458,6 +458,12 @@ class FluxImagePipeline(BasePipeline):
     def enable_fp8_linear(self):
         enable_fp8_linear(self.dit)
 
+    def use_sage_attn(self):
+        self.dit.set_attn_implementation("sage_attn")
+
+    def use_sparge_attn(self):
+        self.dit.set_attn_implementation("sparge_attn")
+
     @torch.no_grad()
     def __call__(
         self,

@@ -18,6 +18,8 @@ logger = logging.get_logger(__name__)
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
 
+_attn_func = nn.functional.scaled_dot_product_attention
+
 
 class FluxDiTStateDictConverter(StateDictConverter):
     def __init__(self):
@@ -177,7 +179,7 @@ class FluxJointAttention(nn.Module):
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
 
-        hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
+        hidden_states = _attn_func(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
         hidden_states_b, hidden_states_a = (
@@ -262,7 +264,7 @@ class FluxSingleAttention(nn.Module):
 
         q, k = self.apply_rope(q_a, k_a, image_rotary_emb)
 
-        hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
+        hidden_states = _attn_func(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
         return hidden_states
@@ -298,7 +300,7 @@ class FluxSingleTransformerBlock(nn.Module):
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
 
-        hidden_states = nn.functional.scaled_dot_product_attention(q, k, v)
+        hidden_states = _attn_func(q, k, v)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
         hidden_states = hidden_states.to(q.dtype)
         return hidden_states
@@ -474,3 +476,29 @@ class FluxDiT(PreTrainedModel):
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
+
+    @staticmethod
+    def set_attn_implementation(attn_implementation: str):
+        supported_implementations = ("sdpa", "sage_attn", "sparge_attn")
+        if attn_implementation not in supported_implementations:
+            raise ValueError(
+                f"attn_implementation must be one of {supported_implementations}, but got '{attn_implementation}'"
+            )
+
+        global _attn_func
+        if attn_implementation == "sage_attn":
+            try:
+                from sageattention import sageattn
+
+                _attn_func = sageattn
+            except ImportError:
+                raise ImportError("sageattn is not installed")
+        elif attn_implementation == "sparge_attn":
+            try:
+                from spas_sage_attn import spas_sage2_attn_meansim_cuda
+
+                _attn_func = spas_sage2_attn_meansim_cuda
+            except ImportError:
+                raise ImportError("spas_sage_attn is not installed")
+        else:
+            _attn_func = nn.functional.scaled_dot_product_attention
