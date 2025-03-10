@@ -37,7 +37,6 @@ class CausalConv3d(nn.Conv3d):
     """
     Causal 3d convolusion.
     """
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._padding = (self.padding[2], self.padding[2], self.padding[1],

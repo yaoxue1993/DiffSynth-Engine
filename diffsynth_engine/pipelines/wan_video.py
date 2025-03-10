@@ -1,10 +1,6 @@
 from diffsynth_engine.algorithm.noise_scheduler.flow_match import RecifitedFlowScheduler
 from diffsynth_engine.algorithm.sampler import FlowMatchEulerSampler
-import os
-if os.environ.get("WAN_OLD", "0") == "1":
-    from diffsynth_engine.models.wan.wan_dit_old import WanDiT
-else:
-    from diffsynth_engine.models.wan.wan_dit import WanDiT
+from diffsynth_engine.models.wan.wan_dit import WanDiT
 from diffsynth_engine.models.wan.wan_text_encoder import WanTextEncoder
 from diffsynth_engine.models.wan.wan_vae import WanVideoVAE
 from diffsynth_engine.models.wan.wan_image_encoder import WanImageEncoder
@@ -17,7 +13,7 @@ from diffsynth_engine.utils.loader import load_file
 from .base import BasePipeline
 from einops import rearrange
 from dataclasses import dataclass
-from typing import Dict, Optional, List, Tuple
+from typing import Optional, List, Tuple
 
 from tqdm import tqdm
 from PIL import Image
@@ -25,20 +21,6 @@ import numpy as np
 import torch
 import logging
 import os
-
-def make_deterministic(seed=42):
-    import random
-    import numpy as np
-    import torch
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(True, warn_only=True)
-
-make_deterministic()
 
 
 logger = logging.getLogger(__name__)
@@ -62,10 +44,14 @@ class WanLoRAConverter(LoRAStateDictConverter):
             lora_args = {}
             if ".lora_A.default.weight" not in key:
                 continue
+
             lora_args["up"] = state_dict[key.replace(".lora_A.default.weight", ".lora_B.default.weight")]            
-            lora_args["down"] = param
-            lora_args["alpha"] = lora_args["up"].shape[1]
+            lora_args["down"] = param            
             lora_args["rank"] = lora_args["up"].shape[1]
+            if key.replace(".lora_A.default.weight", ".alpha") in state_dict:
+                lora_args["alpha"] = state_dict[key.replace(".lora_A.default.weight", ".alpha")]
+            else:
+                lora_args["alpha"] = lora_args["rank"]
             key = key.replace(".lora_A.default.weight", "")
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
@@ -155,7 +141,7 @@ class WanVideoPipeline(BasePipeline):
         msk = msk.transpose(1, 2)[0]
         y = self.vae.encode([torch.concat([image.transpose(0, 1), torch.zeros(3, num_frames-1, height, width).to(image.device, self.config.vae_dtype)], dim=1)], device=self.device)[0]
         y = torch.concat([msk, y])
-        return {"clip_fea": clip_context, "y": [y]}
+        return clip_context, y
 
     def tensor2video(self, frames):
         frames = rearrange(frames, "C T H W -> T H W C")
@@ -179,7 +165,8 @@ class WanVideoPipeline(BasePipeline):
     def predict_noise_with_cfg(
         self,
         latents: torch.Tensor,
-        image_emb: Dict[str, torch.Tensor],
+        image_clip_feature: torch.Tensor,
+        image_y: torch.Tensor,
         timestep: torch.Tensor,
         positive_prompt_emb: torch.Tensor,
         negative_prompt_emb: torch.Tensor,
@@ -191,10 +178,10 @@ class WanVideoPipeline(BasePipeline):
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
-                latents=latents, image_emb=image_emb, timestep=timestep, context=positive_prompt_emb
+                latents=latents, image_clip_feature=image_clip_feature, image_y=image_y, timestep=timestep, context=positive_prompt_emb
             )
             negative_noise_pred = self.predict_noise(
-                latents=latents, image_emb=image_emb, timestep=timestep, context=negative_prompt_emb
+                latents=latents, image_clip_feature=image_clip_feature, image_y=image_y, timestep=timestep, context=negative_prompt_emb
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -204,20 +191,20 @@ class WanVideoPipeline(BasePipeline):
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
-                latents=latents, image_emb=image_emb, timestep=timestep, context=prompt_emb
+                latents=latents, image_clip_feature=image_clip_feature, image_y=image_y, timestep=timestep, context=prompt_emb
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
 
-    def predict_noise(self, latents, image_emb, timestep, context):        
+    def predict_noise(self, latents, image_clip_feature, image_y, timestep, context):        
         latents = latents.to(dtype=self.config.dit_dtype, device=self.device)
         
         noise_pred = self.dit(
             x=latents,
             timestep=timestep,
             context=context,
-            clip_feature=image_emb.get("clip_fea", None),
-            y=image_emb.get("y", None),
+            clip_feature=image_clip_feature,
+            y=image_y,
         )
         return noise_pred
     
@@ -274,9 +261,9 @@ class WanVideoPipeline(BasePipeline):
         # Encode image
         if input_image is not None and self.image_encoder is not None:
             self.load_models_to_device(["image_encoder", "vae"])
-            image_emb = self.encode_image(input_image, num_frames, height, width)
+            image_clip_feature, image_y = self.encode_image(input_image, num_frames, height, width)
         else:
-            image_emb = {}
+            image_clip_feature, image_y = None, None
             
         # Denoise
         self.load_models_to_device(["dit"])
@@ -288,7 +275,8 @@ class WanVideoPipeline(BasePipeline):
                 timestep=timestep,
                 positive_prompt_emb=prompt_emb_posi,
                 negative_prompt_emb=prompt_emb_nega,
-                image_emb=image_emb,
+                image_clip_feature=image_clip_feature,
+                image_y=image_y,
                 cfg_scale=cfg_scale,                
                 batch_cfg=self.batch_cfg
             )

@@ -10,13 +10,16 @@ class TestWanVideo(VideoTestCase):
         config = WanModelConfig(
             model_path='wan/dit.safetensors',
             vae_path='wan/vae.safetensors',
-            t5_path='wan/t5.safetensors'
+            t5_path='wan/umt5.safetensors'
         )
         cls.pipe = WanVideoPipeline.from_pretrained(config)
     
     def test_txt2img(self):
         video = self.pipe(
             prompt="A cat run on the street",
+            num_frames=41,
+            width=480,
+            height=480,
         )
         self.save_video(video, "test_txt2img.mp4")
     

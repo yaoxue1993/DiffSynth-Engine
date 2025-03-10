@@ -1,8 +1,8 @@
+import math
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-import json
 from typing import Tuple, Optional
 from einops import rearrange
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
@@ -21,10 +21,8 @@ def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int)
     x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     return x
 
-
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return (x * (1 + scale) + shift)
-
 
 def sinusoidal_embedding_1d(dim, position):
     sinusoid = torch.outer(position.type(torch.float64), torch.pow(
@@ -32,14 +30,12 @@ def sinusoidal_embedding_1d(dim, position):
     x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
     return x.to(position.dtype)
 
-
 def precompute_freqs_cis_3d(dim: int, end: int = 1024, theta: float = 10000.0):
     # 3d rope precompute
     f_freqs_cis = precompute_freqs_cis(dim - 2 * (dim // 3), end, theta)
     h_freqs_cis = precompute_freqs_cis(dim // 3, end, theta)
     w_freqs_cis = precompute_freqs_cis(dim // 3, end, theta)
     return f_freqs_cis, h_freqs_cis, w_freqs_cis
-
 
 def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     # 1d rope precompute
@@ -49,14 +45,12 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
-
 def rope_apply(x, freqs, num_heads):
     x = rearrange(x, "b s (n d) -> b s n d", n=num_heads)
     x_out = torch.view_as_complex(x.to(torch.float64).reshape(
         x.shape[0], x.shape[1], x.shape[2], -1, 2))
     x_out = torch.view_as_real(x_out * freqs).flatten(2)
     return x_out.to(x.dtype)
-
 
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-5):
@@ -191,7 +185,7 @@ class Head(nn.Module):
 
     def forward(self, x, t_mod):
         shift, scale = (self.modulation + t_mod).chunk(2, dim=1)
-        x = (self.head(self.norm(x) * (1 + scale) + shift))
+        x = self.head(self.norm(x) * (1 + scale) + shift)
         return x
 
 
@@ -202,7 +196,6 @@ class WanDiTStateDictConverter(StateDictConverter):
 
 class WanDiT(PreTrainedModel):
     converter = WanDiTStateDictConverter()
-
     def __init__(
         self,
         dim: int,
@@ -220,6 +213,7 @@ class WanDiT(PreTrainedModel):
         dtype: torch.dtype
     ):
         super().__init__()
+
         self.dim = dim
         self.freq_dim = freq_dim
         self.has_image_input = has_image_input
@@ -237,8 +231,7 @@ class WanDiT(PreTrainedModel):
             nn.SiLU(),
             nn.Linear(dim, dim)
         )
-        self.time_projection = nn.Sequential(
-            nn.SiLU(), nn.Linear(dim, dim * 6))
+        self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
         self.blocks = nn.ModuleList([
             DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps)
             for _ in range(num_layers)
@@ -251,7 +244,7 @@ class WanDiT(PreTrainedModel):
             self.img_emb = MLP(1280, dim)  # clip_feature_dim = 1280
 
     def patchify(self, x: torch.Tensor):
-        x = self.patch_embedding(x)
+        x = self.patch_embedding(x) # b c f h w -> b 4c f h/2 w/2
         grid_size = x.shape[2:]
         x = rearrange(x, 'b c f h w -> b (f h w) c').contiguous()
         return x, grid_size  # x, grid_size: (f, h, w)
@@ -264,12 +257,12 @@ class WanDiT(PreTrainedModel):
         )
 
     def forward(self,
-                x: torch.Tensor,
-                context: torch.Tensor,
-                timestep: torch.Tensor,
-                clip_feature: Optional[torch.Tensor] = None,
-                y: Optional[torch.Tensor] = None
-                ):
+        x: torch.Tensor,
+        context: torch.Tensor,
+        timestep: torch.Tensor,
+        clip_feature: Optional[torch.Tensor] = None, # clip_vision_encoder(img)
+        y: Optional[torch.Tensor] = None # vae_encoder(img)
+    ):
         t = self.time_embedding(
             sinusoidal_embedding_1d(self.freq_dim, timestep))
         t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
@@ -277,7 +270,7 @@ class WanDiT(PreTrainedModel):
         if self.has_image_input:
             x = torch.cat([x, y], dim=1)  # (b, c_x + c_y, f, h, w)
             clip_embdding = self.img_emb(clip_feature)
-            context = torch.cat([clip_embdding, context], dim=1)
+            context = torch.cat([clip_embdding, context], dim=1) # (b, s1 + s2, d)
         x, (f, h, w) = self.patchify(x)
         freqs = torch.cat([
             self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
