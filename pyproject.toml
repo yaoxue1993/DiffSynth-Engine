@@ -37,7 +37,8 @@ dev = [
     "transformers == 4.45.2",
     "ruff",
     "scikit-image",
-    "pytest"
+    "pytest",
+    "pre-commit"
 ]
 all = [
     "diffsynth-engine[dev]",
