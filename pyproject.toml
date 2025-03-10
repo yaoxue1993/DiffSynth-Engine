@@ -28,7 +28,9 @@ dependencies = [
     "flufl.lock",
     "scipy",
     "torchsde",
-    "pillow"
+    "pillow",
+    "imageio",
+    "imageio-ffmpeg"
 ]
 
 [project.optional-dependencies]
