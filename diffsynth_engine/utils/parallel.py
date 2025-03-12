@@ -1,5 +1,6 @@
 import logging
 import os
+import copy
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
@@ -32,6 +33,7 @@ def _worker_loop(
     conn,
     model: nn.Module,
     tp_plan: dict,
+    master_port: int = 29500,
     device: str = "cuda",
 ):
     """    
@@ -41,7 +43,7 @@ def _worker_loop(
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
         os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = "29500"
+        os.environ["MASTER_PORT"] = str(master_port)
         torch.cuda.set_device(rank)
         dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
         tp_mesh = init_device_mesh(device, (world_size,))
@@ -53,12 +55,12 @@ def _worker_loop(
             else:
                 data = [None, None]
             dist.broadcast_object_list(data, src=0)
-            if "TERMINATE" in data:
+            args, kwargs = copy.deepcopy(data)
+            del data
+            if args is "TERMINATE" and kwargs is "TERMINATE":
                 break
-            args, kwargs = data
             result = sharded_model(*args, **kwargs)
-            result = wait_tensor(result)
-            del args, kwargs            
+            result = wait_tensor(result)        
             if dist.get_rank() == 0:
                 conn.send(result)
             dist.barrier()
@@ -77,6 +79,7 @@ class ParallelModel(torch.nn.Module):
         model: nn.Module,
         tp_plan: dict,
         tp_size: int = 4,
+        master_port: int = 29500,
         device: str = "cuda"
     ):
         super().__init__()
@@ -85,7 +88,7 @@ class ParallelModel(torch.nn.Module):
         self.conn_main, conn_worker = mp.Pipe(duplex=True)
         mp.spawn(
             _worker_loop,
-            args=(self.world_size, conn_worker, model, tp_plan, device),
+            args=(self.world_size, conn_worker, model, tp_plan, master_port, device),
             nprocs=self.world_size,
             join=False,
         )

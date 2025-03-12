@@ -66,6 +66,7 @@ class FluxTextEncoder1(SDTextEncoder):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype, vocab_size=vocab_size)
         model.load_state_dict(state_dict)
+        model.to(device=device, dtype=dtype)
         return model
 
 

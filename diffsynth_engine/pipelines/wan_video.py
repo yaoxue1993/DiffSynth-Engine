@@ -174,7 +174,7 @@ class WanVideoPipeline(BasePipeline):
         batch_cfg: bool,
     ):
         if cfg_scale <= 1.0:
-            return self.predict_noise(latents=latents, image_emb=image_emb, timestep=timestep, context=positive_prompt_emb)
+            return self.predict_noise(latents=latents, image_clip_feature=image_clip_feature, image_y=image_y, timestep=timestep, context=positive_prompt_emb)
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
