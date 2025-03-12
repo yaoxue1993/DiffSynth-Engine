@@ -562,7 +562,7 @@ class WanVideoVAE(PreTrainedModel):
         self.upsampling_factor = 8
 
     @classmethod
-    def from_state_dict(cls, state_dict, device, dtype) -> "WanVideoVAE":
+    def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32) -> "WanVideoVAE":
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
         model.load_state_dict(state_dict)

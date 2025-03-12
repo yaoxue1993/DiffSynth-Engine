@@ -29,7 +29,6 @@ class TestWanVAE(VideoTestCase):
 
     def test_decode(self):
         expected_tensor = self.get_expect_tensor("wan/wan_vae.safetensors")
-        latent_tensor = expected_tensor["encoded"]
         latent_tensor, expected = expected_tensor["encoded"], expected_tensor["decoded"]
         with torch.no_grad():
             result = self.vae.decode(latent_tensor, device="cuda:0", tiled=True)[0].cpu()
