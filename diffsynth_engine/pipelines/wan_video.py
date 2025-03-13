@@ -116,13 +116,16 @@ class WanVideoPipeline(BasePipeline):
                     else:
                         module.add_lora(**lora_args)
 
-    def unload_loras(self):
-        for model_name in self.model_names:
-            model = getattr(self, model_name)
-            model.unload_loras()
-
     def load_lora(self, lora_path: str, lora_scale: float, fused: bool = True, save_original_weight: bool = False):
         self.load_loras([(lora_path, lora_scale)], fused, save_original_weight)
+
+    def unload_loras(self):
+        for key, module in self.dit.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
+        for key, module in self.text_encoder_1.named_modules():
+            if isinstance(module, (LoRALinear, LoRAConv2d)):
+                module.clear()
 
     def denoising_model(self):
         return self.dit
