@@ -151,6 +151,9 @@ class WanVideoDenoiseProcedure(nn.Module):
         batch_cfg: bool, 
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):    
+        assert height % 16 == 0 and width % 16 == 0, "height and width must be divisible by 16"
+        assert (num_frames - 1) % 4 == 0, "num_frames must be 4X+1"
+
         timesteps = self.noise_scheduler.get_timesteps(num_frames)
         noise = self.generate_noise((1, 16, (num_frames - 1) // 4 + 1, height//8, width//8), seed=seed, device='cpu', dtype=torch.float32).to(self.device)        
         sigmas, timesteps = self.noise_scheduler.schedule(num_inference_steps)                

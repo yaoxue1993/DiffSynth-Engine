@@ -301,8 +301,9 @@ class WanVideoPipeline(BasePipeline):
         tile_stride=(18, 16),
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
-        assert height % 8 == 0 and width % 8 == 0, "height and width must be divisible by 8"
-        assert (num_frames - 1) % 4 == 0, "num_frames is not 4X+1"
+        assert height % 16 == 0 and width % 16 == 0, "height and width must be divisible by 16"
+        assert (num_frames - 1) % 4 == 0, "num_frames must be 4X+1"
+
         # Initialize noise
         noise = self.generate_noise(
             (1, 16, (num_frames - 1) // 4 + 1, height // 8, width // 8), seed=seed, device="cpu", dtype=torch.float32
