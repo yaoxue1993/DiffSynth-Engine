@@ -123,7 +123,7 @@ class WanVideoPipeline(BasePipeline):
         for key, module in self.dit.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
-        for key, module in self.text_encoder_1.named_modules():
+        for key, module in self.text_encoder.named_modules():
             if isinstance(module, (LoRALinear, LoRAConv2d)):
                 module.clear()
 
@@ -139,7 +139,9 @@ class WanVideoPipeline(BasePipeline):
         return prompt_emb
 
     def encode_image(self, image, num_frames, height, width):
-        image = self.preprocess_image(image.resize((width, height))).to(self.device, self.config.image_encoder_dtype)
+        image = self.preprocess_image(image.resize((width, height), Image.Resampling.LANCZOS)).to(
+            self.device, self.config.image_encoder_dtype
+        )
         clip_context = self.image_encoder.encode_image([image])
         msk = torch.ones(
             1, num_frames, height // 8, width // 8, device=self.device, dtype=self.config.image_encoder_dtype
