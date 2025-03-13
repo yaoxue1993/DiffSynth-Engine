@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from einops import rearrange
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
 
@@ -299,7 +299,7 @@ class WanVideoPipeline(BasePipeline):
         tiled=True,
         tile_size=(34, 34),
         tile_stride=(18, 16),
-        progress_callback=None,  # def progress_callback(current, total, status)
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         assert height % 8 == 0 and width % 8 == 0, "height and width must be divisible by 8"
         assert (num_frames - 1) % 4 == 0, "num_frames is not 4X+1"

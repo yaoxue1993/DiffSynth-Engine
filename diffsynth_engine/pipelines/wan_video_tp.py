@@ -149,7 +149,7 @@ class WanVideoDenoiseProcedure(nn.Module):
         image_y: torch.Tensor,
         cfg_scale: float, 
         batch_cfg: bool, 
-        progress_callback: Callable
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):    
         timesteps = self.noise_scheduler.get_timesteps(num_frames)
         noise = self.generate_noise((1, 16, (num_frames - 1) // 4 + 1, height//8, width//8), seed=seed, device='cpu', dtype=torch.float32).to(self.device)        

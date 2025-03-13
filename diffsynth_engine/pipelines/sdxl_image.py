@@ -2,7 +2,6 @@ import os
 import re
 import torch
 from typing import Callable, Dict, List, Tuple, Optional
-from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
@@ -363,8 +362,7 @@ class SDXLImagePipeline(BasePipeline):
         tile_size: int = 64,
         tile_stride: int = 32,
         seed: int | None = None,
-        progress_bar_cmd: Callable = tqdm,
-        progress_bar_st: ModuleType | None = None,
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         if input_image is not None:
             width, height = input_image.size
@@ -397,7 +395,7 @@ class SDXLImagePipeline(BasePipeline):
 
         # Denoise
         self.load_models_to_device(["unet"])
-        for i, timestep in enumerate(progress_bar_cmd(timesteps)):
+        for i, timestep in enumerate(tqdm(timesteps)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             # Classifier-free guidance
             noise_pred = self.predict_noise_with_cfg(
@@ -414,8 +412,8 @@ class SDXLImagePipeline(BasePipeline):
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
             # UI
-            if progress_bar_st is not None:
-                progress_bar_st.progress(i / len(timesteps))
+            if progress_callback is not None:
+                progress_callback.progress(i, len(timesteps), "DENOISING")
         if mask_image is not None:
             latents = latents * mask + init_latents * (1 - mask)
         # Decode image

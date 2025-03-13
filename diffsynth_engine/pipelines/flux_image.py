@@ -3,7 +3,6 @@ import os
 import torch
 import math
 from typing import Callable, Dict, List, Tuple, Optional
-from types import ModuleType
 from safetensors.torch import load_file
 from tqdm import tqdm
 from PIL import Image
@@ -481,8 +480,7 @@ class FluxImagePipeline(BasePipeline):
         tile_size: int = 128,
         tile_stride: int = 64,
         seed: int | None = None,
-        progress_bar_cmd: Callable = tqdm,
-        progress_bar_st: ModuleType | None = None,
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         if input_image is not None:
             width, height = input_image.size
@@ -512,7 +510,7 @@ class FluxImagePipeline(BasePipeline):
 
         # Denoise
         self.load_models_to_device(["dit"])
-        for i, timestep in enumerate(progress_bar_cmd(timesteps)):
+        for i, timestep in enumerate(tqdm(timesteps)):
             timestep = timestep.unsqueeze(0).to(dtype=self.dtype)
             noise_pred = self.predict_noise_with_cfg(
                 latents=latents,
@@ -534,8 +532,8 @@ class FluxImagePipeline(BasePipeline):
                 sample = sigmas[i] * noise + (1.0 - sigmas[i]) * init_latents
                 latents = latents * mask + sample * (1 - mask)
             # UI
-            if progress_bar_st is not None:
-                progress_bar_st.progress(i / len(timesteps))
+            if progress_callback is not None:
+                progress_callback.progress(i, len(timesteps), "DENOISING")
         # Decode image
         self.load_models_to_device(["vae_decoder"])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)

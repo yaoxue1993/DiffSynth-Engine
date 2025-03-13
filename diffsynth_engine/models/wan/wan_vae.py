@@ -619,7 +619,7 @@ class WanVideoVAE(PreTrainedModel):
             device=data_device,
         )
 
-        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE decoding")):
+        for i, (h, h_, w, w_) in enumerate(tqdm(tasks, desc="VAE DECODING")):
             hidden_states_batch = hidden_states[:, :, :, h:h_, w:w_].to(computation_device)
             hidden_states_batch = self.model.decode(hidden_states_batch, self.scale).to(data_device)
 
