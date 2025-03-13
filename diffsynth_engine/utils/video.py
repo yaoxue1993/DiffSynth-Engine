@@ -27,7 +27,7 @@ def load_video(path: str) -> VideoReader:
     return VideoReader(path)
 
 
-def save_video(frames, save_path, fps):
+def save_video(frames, save_path, fps=15):
     if save_path.endswith(".webm"):
         codec = "libvpx-vp9"
     elif save_path.endswith(".mp4"):
