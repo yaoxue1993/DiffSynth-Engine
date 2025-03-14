@@ -533,7 +533,7 @@ class FluxImagePipeline(BasePipeline):
                 latents = latents * mask + sample * (1 - mask)
             # UI
             if progress_callback is not None:
-                progress_callback.progress(i, len(timesteps), "DENOISING")
+                progress_callback(i, len(timesteps), "DENOISING")
         # Decode image
         self.load_models_to_device(["vae_decoder"])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)

@@ -368,7 +368,7 @@ class SDImagePipeline(BasePipeline):
 
             # UI
             if progress_callback is not None:
-                progress_callback.progress(i, len(timesteps), "DENOISING")
+                progress_callback(i, len(timesteps), "DENOISING")
 
         if mask_image is not None:
             latents = latents * mask + init_latents * (1 - mask)
