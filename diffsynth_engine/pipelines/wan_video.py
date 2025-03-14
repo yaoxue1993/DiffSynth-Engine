@@ -418,9 +418,22 @@ class WanVideoPipeline(BasePipeline):
             ).to(dtype=model_config.image_encoder_dtype)
 
         with LoRAContext():
-            dit = WanDiT.from_state_dict(dit_state_dict, device=init_device, dtype=model_config.dit_dtype).to(
-                dtype=model_config.dit_dtype
-            )
+            # Check wan video model type from dit state dict
+            model_type = None
+            if "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
+                if image_encoder is not None:
+                    model_type = "14b-i2v"
+                else:
+                    model_type = "14b-t2v"
+            else:
+                model_type = "1.3b-t2v"
+
+            dit = WanDiT.from_state_dict(
+                dit_state_dict,
+                device=init_device,
+                dtype=model_config.dit_dtype,
+                model_type=model_type
+            ).to(dtype=model_config.dit_dtype)
 
         pipe = cls(
             config=model_config,
