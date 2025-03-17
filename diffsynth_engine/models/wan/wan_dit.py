@@ -52,25 +52,40 @@ def rope_apply(x, freqs, num_heads):
     x_out = torch.view_as_real(x_out * freqs).flatten(2)
     return x_out.to(x.dtype)
 
+
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-5):
         super().__init__()
         self.eps = eps
+        self.dim = dim
         self.weight = nn.Parameter(torch.ones(dim))
 
-    def norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+    def tp_norm(self, x):
+        world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
+        assert self.dim % world_size == 0
+        dtype, x = x.dtype, x.float()
+        x_pow2 = x.pow(2)
+        torch.distributed.all_reduce(x_pow2)
+        x = x * torch.rsqrt(x_pow2.sum(dim=-1, keepdim=True) / (x.shape[-1] * world_size) + self.eps)
+        local_dim = self.dim // world_size
+        return x.to(dtype) * self.weight.data[rank * local_dim:(rank + 1) * local_dim]
 
-    def forward(self, x):
-        dtype = x.dtype
-        return self.norm(x.float()).to(dtype) * self.weight
+    def norm(self, x):
+        dtype, x = x.dtype, x.float()        
+        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return x.to(dtype) * self.weight
+
+    def forward(self, x):        
+        if torch.distributed.is_initialized() and x.shape[-1] != self.dim:
+            return self.tp_norm(x)
+        else:
+            return self.norm(x)
 
 
 class SelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, eps: float = 1e-6):
         super().__init__()
         self.dim = dim
-        self.num_heads = num_heads
         self.head_dim = dim // num_heads
 
         self.q = nn.Linear(dim, dim)
@@ -84,11 +99,12 @@ class SelfAttention(nn.Module):
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(x))
         v = self.v(x)
+        num_heads = q.shape[2] // self.head_dim
         x = attention(
-            q=rope_apply(q, freqs, self.num_heads),
-            k=rope_apply(k, freqs, self.num_heads),
+            q=rope_apply(q, freqs, num_heads),
+            k=rope_apply(k, freqs, num_heads),
             v=v,
-            num_heads=self.num_heads
+            num_heads=num_heads
         )
         return self.o(x)
 
@@ -97,7 +113,6 @@ class CrossAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, has_image_input: bool = False):
         super().__init__()
         self.dim = dim
-        self.num_heads = num_heads
         self.head_dim = dim // num_heads
 
         self.q = nn.Linear(dim, dim)
@@ -121,7 +136,8 @@ class CrossAttention(nn.Module):
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(ctx))
         v = self.v(ctx)
-        x = attention(q, k, v, num_heads=self.num_heads)
+        num_heads = q.shape[2] // self.head_dim
+        x = attention(q, k, v, num_heads=num_heads)
         if self.has_image_input:
             k_img = self.norm_k_img(self.k_img(img))
             v_img = self.v_img(img)
@@ -209,8 +225,8 @@ class WanDiT(PreTrainedModel):
         num_heads: int,
         num_layers: int,
         has_image_input: bool,
-        device: str,
-        dtype: torch.dtype
+        device: str = 'cpu',
+        dtype: torch.dtype = torch.bfloat16
     ):
         super().__init__()
 
@@ -296,5 +312,27 @@ class WanDiT(PreTrainedModel):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
                 cls, **config, device=device, dtype=dtype)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype)
         return model
+
+
+    def get_tp_plan(self):
+        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel
+        tp_plan = {}
+        for idx in range(len(self.blocks)):
+            tp_plan.update({
+                f'blocks.{idx}.ffn.0': ColwiseParallel(),
+                f'blocks.{idx}.ffn.2': RowwiseParallel(),
+                f"blocks.{idx}.self_attn.q": ColwiseParallel(),
+                f"blocks.{idx}.self_attn.k": ColwiseParallel(),
+                f"blocks.{idx}.self_attn.v": ColwiseParallel(),
+                f"blocks.{idx}.self_attn.o": RowwiseParallel(),
+                f"blocks.{idx}.cross_attn.q": ColwiseParallel(),
+                f"blocks.{idx}.cross_attn.k": ColwiseParallel(),
+                f"blocks.{idx}.cross_attn.v": ColwiseParallel(),
+                f"blocks.{idx}.cross_attn.o": RowwiseParallel(),
+                f"blocks.{idx}.cross_attn.k_img": ColwiseParallel(),
+                f"blocks.{idx}.cross_attn.v_img": ColwiseParallel()
+            })
+        return tp_plan

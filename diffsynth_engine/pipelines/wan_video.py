@@ -21,6 +21,7 @@ from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_modelscope_model
 from diffsynth_engine.utils.loader import load_file
+from diffsynth_engine.utils.parallel import ParallelModel
 
 
 logger = logging.getLogger(__name__)
@@ -371,6 +372,7 @@ class WanVideoPipeline(BasePipeline):
         dtype: torch.dtype = torch.bfloat16,
         batch_cfg: bool = False,
         offload_mode: str | None = None,
+        tensor_parallel_size: int = 1
     ) -> "WanVideoPipeline":
         cls.validate_offload_mode(offload_mode)
 
@@ -434,6 +436,13 @@ class WanVideoPipeline(BasePipeline):
                 dtype=model_config.dit_dtype,
                 model_type=model_type
             ).to(dtype=model_config.dit_dtype)
+
+            if tensor_parallel_size > 1:
+                dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device="cpu", dtype=model_config.dit_dtype)
+                dit = ParallelModel(dit, dit.get_tp_plan(), tp_size=tensor_parallel_size, device='cuda')
+            else:
+                with LoRAContext():
+                    dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device=init_device, dtype=model_config.dit_dtype)
 
         pipe = cls(
             config=model_config,

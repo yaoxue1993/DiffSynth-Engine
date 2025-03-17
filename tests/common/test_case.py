@@ -93,7 +93,7 @@ class VideoTestCase(TestCase):
         return load_video(VideoTestCase.testdata_dir / "input" / f"{name}")
 
     def save_video(self, video: List[Image.Image], name: str, fps:int=15):
-        save_video(video, f"{name}.mp4", fps=fps)
+        save_video(video, name, fps=fps)
 
     def assertVideoEqual(self, input_video: List[Image.Image], expect_video: VideoReader, threshold=0.965, fps:int=15):
         ssim_list = []
@@ -111,6 +111,6 @@ class VideoTestCase(TestCase):
             self.assertVideoEqual(input_video, expect_video, threshold=threshold)
         except Exception as e:
             name = expect_video_path.split("/")[-1]
-            self.save_video(input_video, f"{name}.mp4", fps=fps)
+            self.save_video(input_video, name, fps=fps)
             raise e
 

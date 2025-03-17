@@ -5,27 +5,65 @@ import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
 import torch.distributed as dist
-from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.device_mesh import init_device_mesh
+from typing import Optional, Union, Dict
 
+from torch.distributed.device_mesh import init_device_mesh, DeviceMesh
+from torch.distributed.tensor.parallel.style import ParallelStyle
+from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
 
 logger = logging.getLogger(__name__)
 
 def wait_tensor(data):
+    if isinstance(data, dict):
+        return {k: wait_tensor(v) for k, v in data.items()}
     if isinstance(data, tuple) or isinstance(data, list):
         return [wait_tensor(t) for t in data]
-    elif isinstance(data, torch.Tensor):
+    if hasattr(data, 'wait'):
         return data.wait()
     else:
         return data
 
 def clone_tensor(data):
+    if isinstance(data, dict):
+        return {k: clone_tensor(v) for k, v in data.items()}
     if isinstance(data, tuple) or isinstance(data, list):
         return [clone_tensor(t) for t in data]
     elif isinstance(data, torch.Tensor):
         return data.clone()
     else:
         return data
+
+def to_device(data, device):
+    if isinstance(data, dict):
+        return {k: to_device(v, device) for k, v in data.items()}
+    if isinstance(data, tuple) or isinstance(data, list):
+        return [to_device(t, device) for t in data]
+    elif isinstance(data, torch.Tensor):
+        return data.to(device)
+    else:
+        return data
+    
+def parallelize_module(        
+    module: nn.Module,
+    device_mesh: Optional[DeviceMesh] = None,
+    parallelize_plan: Optional[Union[ParallelStyle, Dict[str, ParallelStyle]]] = None,
+):
+    _validate_tp_mesh_dim(device_mesh)
+    if parallelize_plan is None:
+        return module
+    for module_path, parallelize_style in parallelize_plan.items():
+        path_splits = module_path.split(".")
+        if len(path_splits) == 0:
+            raise ValueError("Expect module path to be non-empty, but got empty string!")
+        current = module
+        try:
+            for atom in path_splits:
+                current = getattr(current, atom)
+            parallelize_style._apply(current, device_mesh)                
+        except AttributeError:
+            logger.warning(f"Module path {module_path} is invalid, skip.")
+            continue
+    return module            
 
 def _worker_loop(
     rank: int,
@@ -48,6 +86,7 @@ def _worker_loop(
         dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
         tp_mesh = init_device_mesh(device, (world_size,))
         sharded_model = parallelize_module(model, tp_mesh, tp_plan)
+        sharded_model.cuda()
         while True:
             if dist.get_rank() == 0:            
                 args, kwargs = conn.recv()
@@ -55,16 +94,20 @@ def _worker_loop(
             else:
                 data = [None, None]
             dist.broadcast_object_list(data, src=0)
-            args, kwargs = copy.deepcopy(data)
+            args, kwargs = to_device(copy.deepcopy(data), device)
             del data
-            if args is "TERMINATE" and kwargs is "TERMINATE":
+            if args == "TERMINATE" and kwargs == "TERMINATE":
                 break
-            result = sharded_model(*args, **kwargs)
-            result = wait_tensor(result)        
+            with torch.no_grad():
+                result = sharded_model(*args, **kwargs)
+                result = wait_tensor(result)        
             if dist.get_rank() == 0:
                 conn.send(result)
             dist.barrier()
     except Exception as e:
+        # 打印traceback
+        import traceback
+        traceback.print_exc()
         logger.error(f"Error in worker loop (rank {rank}): {e}")
     finally:
         del sharded_model
@@ -102,8 +145,7 @@ class ParallelModel(torch.nn.Module):
         # Send terminate signal to all workers
         if hasattr(self, 'conn_main'):
             self.conn_main.send(("TERMINATE", "TERMINATE"))
-            self.conn_main.close()
-                   
+            self.conn_main.close()          
 
 __all__ = [
     "ParallelModel"
