@@ -7,6 +7,7 @@ from diffsynth_engine.algorithm.noise_scheduler.flow_match.recifited_flow import
 class FlowDDIMScheduler(RecifitedFlowScheduler):
     def __init__(self, shift=1.0, num_train_timesteps=1000, use_dynamic_shifting=False):
         super().__init__(shift, num_train_timesteps, use_dynamic_shifting)
+        self.pseudo_timestep_range = 10000
 
     def schedule(self, num_inference_steps: int, mu: float | None = None, sigmas: torch.Tensor | None = None):
         inner_sigmas = torch.arange(1, self.pseudo_timestep_range + 1, 1) / self.pseudo_timestep_range
