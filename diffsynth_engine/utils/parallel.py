@@ -61,7 +61,6 @@ def parallelize_module(
                 current = getattr(current, atom)
             parallelize_style._apply(current, device_mesh)                
         except AttributeError:
-            logger.warning(f"Module path {module_path} is invalid, skip.")
             continue
     return module            
 

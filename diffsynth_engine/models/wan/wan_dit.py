@@ -70,6 +70,13 @@ class RMSNorm(nn.Module):
         local_dim = self.dim // world_size
         return x.to(dtype) * self.weight.data[rank * local_dim:(rank + 1) * local_dim]
 
+    def local_norm(self, x):
+        world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
+        local_dim = self.dim // world_size
+        dtype, x = x.dtype, x.float()        
+        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return x.to(dtype) * self.weight.data[rank * local_dim:(rank + 1) * local_dim]
+
     def norm(self, x):
         dtype, x = x.dtype, x.float()        
         x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
@@ -166,7 +173,7 @@ class DiTBlock(nn.Module):
     def forward(self, x, context, t_mod, freqs):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.modulation + t_mod).chunk(6, dim=1)
+            self.modulation + t_mod).chunk(6, dim=1)        
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
         x = x + gate_msa * self.self_attn(input_x, freqs)
         x = x + self.cross_attn(self.norm3(x), context)
@@ -318,10 +325,14 @@ class WanDiT(PreTrainedModel):
 
 
     def get_tp_plan(self):
-        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel
+        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel, PrepareModuleInput
+        from torch.distributed._tensor import Shard, Replicate
         tp_plan = {}
         for idx in range(len(self.blocks)):
             tp_plan.update({
+                f'blocks.{idx}.norm1': SequenceParallel(use_local_output=True),
+                f'blocks.{idx}.norm2': SequenceParallel(use_local_output=True),                
+                f'blocks.{idx}.norm3': SequenceParallel(use_local_output=True),
                 f'blocks.{idx}.ffn.0': ColwiseParallel(),
                 f'blocks.{idx}.ffn.2': RowwiseParallel(),
                 f"blocks.{idx}.self_attn.q": ColwiseParallel(),
