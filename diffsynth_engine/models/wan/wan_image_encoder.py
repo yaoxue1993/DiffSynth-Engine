@@ -228,12 +228,6 @@ class QuickGELU(nn.Module):
         return x * torch.sigmoid(1.702 * x)
 
 
-class LayerNorm(nn.LayerNorm):
-
-    def forward(self, x):
-        return super().forward(x.float()).type_as(x)
-
-
 class SelfAttention(nn.Module):
 
     def __init__(self,
@@ -266,7 +260,7 @@ class SelfAttention(nn.Module):
 
         # compute attention
         p = self.attn_dropout if self.training else 0.0
-        x = attention(q, k, v, dropout_p=p, causal=self.causal, version=2)
+        x = attention(q, k, v, dropout_p=p, causal=self.causal, fa_version=2)
         x = x.reshape(b, s, c)
 
         # output
@@ -315,10 +309,10 @@ class AttentionBlock(nn.Module):
         self.norm_eps = norm_eps
 
         # layers
-        self.norm1 = LayerNorm(dim, eps=norm_eps)
+        self.norm1 = nn.LayerNorm(dim, eps=norm_eps)
         self.attn = SelfAttention(dim, num_heads, causal, attn_dropout,
                                   proj_dropout)
-        self.norm2 = LayerNorm(dim, eps=norm_eps)
+        self.norm2 = nn.LayerNorm(dim, eps=norm_eps)
         if activation == 'swi_glu':
             self.mlp = SwiGLU(dim, int(dim * mlp_ratio))
         else:
@@ -361,7 +355,7 @@ class AttentionPool(nn.Module):
         self.to_q = nn.Linear(dim, dim)
         self.to_kv = nn.Linear(dim, dim * 2)
         self.proj = nn.Linear(dim, dim)
-        self.norm = LayerNorm(dim, eps=norm_eps)
+        self.norm = nn.LayerNorm(dim, eps=norm_eps)
         self.mlp = nn.Sequential(
             nn.Linear(dim, int(dim * mlp_ratio)),
             QuickGELU() if activation == 'quick_gelu' else nn.GELU(),
@@ -378,7 +372,7 @@ class AttentionPool(nn.Module):
         k, v = self.to_kv(x).view(b, s, 2, n, d).unbind(2)
 
         # compute attention
-        x = attention(q, k, v, version=2)
+        x = attention(q, k, v, fa_version=2)
         x = x.reshape(b, 1, c)
 
         # output
@@ -443,13 +437,13 @@ class VisionTransformer(nn.Module):
         self.dropout = nn.Dropout(embedding_dropout)
 
         # transformer
-        self.pre_norm = LayerNorm(dim, eps=norm_eps) if pre_norm else None
+        self.pre_norm = nn.LayerNorm(dim, eps=norm_eps) if pre_norm else None
         self.transformer = nn.Sequential(*[
             AttentionBlock(dim, mlp_ratio, num_heads, post_norm, False,
                            activation, attn_dropout, proj_dropout, norm_eps)
             for _ in range(num_layers)
         ])
-        self.post_norm = LayerNorm(dim, eps=norm_eps)
+        self.post_norm = nn.LayerNorm(dim, eps=norm_eps)
 
         # head
         if pool_type == 'token':
@@ -857,10 +851,10 @@ def clip_xlm_roberta_vit_h_14(
 
     
 class WanImageEncoderStateDictConverter(StateDictConverter):
-    def from_diffusers(self, state_dict):
+    def _from_diffusers(self, state_dict):
         return state_dict
     
-    def from_civitai(self, state_dict):
+    def _from_civitai(self, state_dict):
         state_dict_ = {}
         for name, param in state_dict.items():
             if name.startswith("textual."):
@@ -870,7 +864,12 @@ class WanImageEncoderStateDictConverter(StateDictConverter):
         return state_dict_
     
     def convert(self, state_dict):
+        if "visual.transformer.9.norm2.weight" in state_dict:
+            state_dict = self._from_civitai(state_dict)
+        else:
+            state_dict = self._from_diffusers(state_dict)
         return state_dict
+
 
 class WanImageEncoder(PreTrainedModel):
     converter = WanImageEncoderStateDictConverter()

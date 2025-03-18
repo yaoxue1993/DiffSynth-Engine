@@ -163,8 +163,8 @@ class WanVideoPipeline(BasePipeline):
             ],
             device=self.device,
         )[0]
-        y = torch.concat([msk, y])
-        return clip_context, y
+        y = torch.concat([msk, y]).to(dtype=self.dtype)
+        return clip_context, torch.unsqueeze(y, 0)
 
     def tensor2video(self, frames):
         frames = rearrange(frames, "C T H W -> T H W C")
