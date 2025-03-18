@@ -152,7 +152,7 @@ class CrossAttention(nn.Module):
         if self.has_image_input:
             k_img = self.norm_k_img(self.k_img(img))
             v_img = self.v_img(img)
-            y = attention(q, k_img, v_img, num_heads=self.num_heads)
+            y = attention(q, k_img, v_img, num_heads=num_heads)
             x = x + y
         return self.o(x)
 
