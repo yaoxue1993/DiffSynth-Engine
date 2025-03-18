@@ -43,6 +43,17 @@ def to_device(data, device):
     else:
         return data
     
+def split_and_get(data, num, index):
+    if isinstance(data, dict):
+        return {k: split_and_get(v, num, index) for k, v in data.items()}
+    if isinstance(data, tuple) or isinstance(data, list):
+        return [split_and_get(t, num, index) for t in data]
+    if isinstance(data, torch.Tensor):
+        if data.shape[0] < num:
+            raise ValueError(f"data.shape[0] < num, batch split failed")
+        return torch.split(data, data.shape[0] // num, dim=0)[index]
+    return data
+    
 def parallelize_module(        
     module: nn.Module,
     device_mesh: Optional[DeviceMesh] = None,
@@ -70,6 +81,8 @@ def _worker_loop(
     conn,
     model: nn.Module,
     tp_plan: dict,
+    tensor_parallelism: int,
+    batch_parallelism: int,
     master_port: int = 29500,
     device: str = "cuda",
 ):
@@ -83,25 +96,32 @@ def _worker_loop(
         os.environ["MASTER_PORT"] = str(master_port)
         torch.cuda.set_device(rank)
         dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
-        tp_mesh = init_device_mesh(device, (world_size,))
-        sharded_model = parallelize_module(model, tp_mesh, tp_plan)
+        mesh_2d = init_device_mesh(device, (batch_parallelism, tensor_parallelism), mesh_dim_names=("batch_parallel", "tensor_parallel"))
+        mesh_tp = mesh_2d["tensor_parallel"]
+        mesh_bp = mesh_2d["batch_parallel"]
+        sharded_model = parallelize_module(model, mesh_tp, tp_plan)
         sharded_model.cuda()
         while True:
-            if dist.get_rank() == 0:            
-                args, kwargs = conn.recv()
-                data = [args, kwargs]
+            if mesh_2d.get_rank() == 0:            
+                kwargs = conn.recv()
+                data = [kwargs]
             else:
-                data = [None, None]
+                data = [None]            
             dist.broadcast_object_list(data, src=0)
-            args, kwargs = to_device(copy.deepcopy(data), device)
+            kwargs = to_device(copy.deepcopy(data[0]), device)
             del data
-            if args == "TERMINATE" and kwargs == "TERMINATE":
-                break
+            if kwargs == "TERMINATE":
+                break            
+            kwargs = split_and_get(kwargs, mesh_bp.size(), mesh_bp.get_local_rank())
             with torch.no_grad():
-                result = sharded_model(*args, **kwargs)
-                result = wait_tensor(result)        
-            if dist.get_rank() == 0:
-                conn.send(result)
+                result = sharded_model(**kwargs)
+                result = wait_tensor(result)  # 虽然这里可以扩展，但我们默认这里的result为单个tensor
+            if mesh_tp.get_local_rank() == 0:
+                final_result = torch.zeros((mesh_bp.size(), *result.shape[1:]), dtype=result.dtype, device=result.device)
+                dist.all_gather_into_tensor(final_result, result, group=mesh_bp.get_group()) # 是否是保顺序的
+                result = final_result
+            if mesh_2d.get_rank() == 0:                
+                conn.send(final_result)
             dist.barrier()
     except Exception as e:
         # 打印traceback
@@ -113,37 +133,38 @@ def _worker_loop(
         conn.close()        
         torch.cuda.synchronize()
         dist.destroy_process_group()
-        
+
 
 class ParallelModel(torch.nn.Module):
     def __init__(
         self,
         model: nn.Module,
         tp_plan: dict,
-        tp_size: int = 4,
+        tensor_parallelism: int = 4,
+        batch_parallelism: int = 2,
         master_port: int = 29500,
         device: str = "cuda"
     ):
         super().__init__()
-        self.world_size = tp_size
+        self.world_size = tensor_parallelism * batch_parallelism
         self.device = device
         self.conn_main, conn_worker = mp.Pipe(duplex=True)
         mp.spawn(
             _worker_loop,
-            args=(self.world_size, conn_worker, model, tp_plan, master_port, device),
+            args=(self.world_size, conn_worker, model, tp_plan, tensor_parallelism, batch_parallelism, master_port, device),
             nprocs=self.world_size,
             join=False,
         )
 
-    def forward(self, *args, **kwargs):
-        self.conn_main.send((args, kwargs))        
+    def forward(self, **kwargs):
+        self.conn_main.send(kwargs)        
         result = self.conn_main.recv()
         return clone_tensor(result)
     
     def __del__(self):
         # Send terminate signal to all workers
         if hasattr(self, 'conn_main'):
-            self.conn_main.send(("TERMINATE", "TERMINATE"))
+            self.conn_main.send("TERMINATE")
             self.conn_main.close()          
 
 __all__ = [

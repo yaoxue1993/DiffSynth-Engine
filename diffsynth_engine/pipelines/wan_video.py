@@ -235,6 +235,10 @@ class WanVideoPipeline(BasePipeline):
             prompt_emb = torch.cat([positive_prompt_emb, negative_prompt_emb], dim=0)
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
+            if image_y is not None:
+                image_y = torch.cat([image_y, image_y], dim=0)
+            if image_clip_feature is not None:
+                image_clip_feature = torch.cat([image_clip_feature, image_clip_feature], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
                 latents=latents,
                 image_clip_feature=image_clip_feature,
@@ -372,7 +376,8 @@ class WanVideoPipeline(BasePipeline):
         dtype: torch.dtype = torch.bfloat16,
         batch_cfg: bool = False,
         offload_mode: str | None = None,
-        tensor_parallel_size: int = 1
+        parallelism: int = 1,
+        use_cfg_parallel: bool = False,
     ) -> "WanVideoPipeline":
         cls.validate_offload_mode(offload_mode)
 
@@ -437,9 +442,17 @@ class WanVideoPipeline(BasePipeline):
                 model_type=model_type
             ).to(dtype=model_config.dit_dtype)
 
-            if tensor_parallel_size > 1:
+            if parallelism > 1:
+                assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
+                if use_cfg_parallel:
+                    tensor_parallelism = parallelism // 2
+                    batch_parallelism = 2
+                    batch_cfg = True
+                else:
+                    tensor_parallelism = parallelism 
+                    batch_parallelism = 1                
                 dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device="cpu", dtype=model_config.dit_dtype)
-                dit = ParallelModel(dit, dit.get_tp_plan(), tp_size=tensor_parallel_size, device='cuda')
+                dit = ParallelModel(dit, dit.get_tp_plan(), tensor_parallelism=tensor_parallelism, batch_parallelism=batch_parallelism, device='cuda')                    
             else:
                 with LoRAContext():
                     dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device=init_device, dtype=model_config.dit_dtype)

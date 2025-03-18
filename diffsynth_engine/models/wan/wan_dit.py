@@ -62,6 +62,8 @@ class RMSNorm(nn.Module):
 
     def tp_norm(self, x):
         world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
+        world_size = world_size // 2
+        rank = rank % world_size
         assert self.dim % world_size == 0
         dtype, x = x.dtype, x.float()
         x_pow2 = x.pow(2)
@@ -72,6 +74,8 @@ class RMSNorm(nn.Module):
 
     def local_norm(self, x):
         world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
+        world_size = world_size // 2
+        rank = rank % world_size
         local_dim = self.dim // world_size
         dtype, x = x.dtype, x.float()        
         x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
@@ -84,7 +88,7 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):        
         if torch.distributed.is_initialized() and x.shape[-1] != self.dim:
-            return self.tp_norm(x)
+            return self.local_norm(x)
         else:
             return self.norm(x)
 
@@ -307,7 +311,7 @@ class WanDiT(PreTrainedModel):
         return x
 
     @classmethod
-    def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v'):
+    def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v', assign=True):
         if model_type == '1.3b-t2v':
             config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, 'r'))
         elif model_type == '14b-t2v':
@@ -319,14 +323,13 @@ class WanDiT(PreTrainedModel):
         with no_init_weights():
             model = torch.nn.utils.skip_init(
                 cls, **config, device=device, dtype=dtype)
-        model.load_state_dict(state_dict, assign=True)
+        model.load_state_dict(state_dict, assign=assign)
         model.to(device=device, dtype=dtype)
         return model
 
 
     def get_tp_plan(self):
-        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel, PrepareModuleInput
-        from torch.distributed._tensor import Shard, Replicate
+        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel
         tp_plan = {}
         for idx in range(len(self.blocks)):
             tp_plan.update({
