@@ -6,10 +6,6 @@
 [![GitHub pull-requests](https://img.shields.io/github/issues-pr/modelscope/DiffSynth-Engine.svg)](https://GitHub.com/modelscope/DiffSynth-Engine/pull/)
 [![GitHub latest commit](https://badgen.net/github/last-commit/modelscope/DiffSynth-Engine)](https://GitHub.com/modelscope/DiffSynth-Engine/commit/)
 
-<p align="center">
-<a href="https://trendshift.io/repositories/10946" target="_blank"><img src="https://trendshift.io/api/badge/repositories/10946" alt="modelscope%2FDiffSynth-Engine | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</p>
-
 Diffsynth Engine is a high-performance diffusion inference engine designed for developers.
 
 **Key Features:**
@@ -29,16 +25,16 @@ and offload strategies, enabling users to run large models (e.g., Flux.1 Dev) on
 ### Requirements
 
 - Python 3.10+
-- NVIDIA GPU with compute capability 8.6+ (e.g., RTX 50 Series, RTX 40 Series, RTX 30 Series) or Apple Silicon M-series.
+- NVIDIA GPU with compute capability 8.6+ (e.g., RTX 50 Series, RTX 40 Series, RTX 30 Series. Please see [here](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities) for more details about your GPUs.) or Apple Silicon M-series.
 
 ### Installation
 
-Install for PyPI
+Install for PyPI (stable version)
 ```python
 pip3 install diffsynth-engine
 ```
 
-Install for source
+Install for source (preview version)
 ```python
 git clone https://github.com/modelscope/diffsynth-engine.git && cd diffsynth-engine
 pip3 install -e .
@@ -66,6 +62,8 @@ pipe.load_lora(path=lora_path, scale=1.0)
 image = pipe(prompt="a girl, qipao")
 image.save("image.png")
 ```
+
+For more details, please refer to our tutorials ([English](./docs/tutorial.md), [中文](./docs/tutorial_zh.md)).
 
 ## Showcase
 
