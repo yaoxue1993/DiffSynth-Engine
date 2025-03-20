@@ -346,7 +346,7 @@ class SDImagePipeline(BasePipeline):
         self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
 
         # Encode prompts
-        self.load_models_to_device(["text_encoder", "text_encoder_2"])
+        self.load_models_to_device(["text_encoder"])
         positive_prompt_emb = self.encode_prompt(prompt, clip_skip=clip_skip)
         negative_prompt_emb = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
 
