@@ -74,7 +74,6 @@ For more details, please refer to our tutorials ([English](./docs/tutorial.md), 
 If you have any questions or feedback, please scan the QR code or send email to muse@alibaba-inc.com.
 
 <div style="display: flex; justify-content: space-between;">
-    <img src="assets/weixin.jpg" alt="weixin" style="zoom: 33%;" />
     <img src="assets/dingtalk.png" alt="dingtalk" style="zoom: 60%;" />
 </div>
 
