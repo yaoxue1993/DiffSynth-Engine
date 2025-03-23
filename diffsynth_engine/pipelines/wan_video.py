@@ -1,4 +1,3 @@
-import os
 import logging
 import torch
 import numpy as np
@@ -19,7 +18,7 @@ from diffsynth_engine.models.base import LoRAStateDictConverter
 from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
-from diffsynth_engine.utils.download import fetch_modelscope_model
+from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.loader import load_file
 from diffsynth_engine.utils.parallel import ParallelModel
 
@@ -386,76 +385,82 @@ class WanVideoPipeline(BasePipeline):
         else:
             model_config = model_path_or_config
 
-        if model_config.vae_path is None:
-            model_config.vae_path = fetch_modelscope_model("muse/wan2.1-vae", path="vae.safetensors")
-            model_config.vae_dtype = dtype
-        if model_config.t5_path is None:
-            model_config.t5_path = fetch_modelscope_model("muse/wan2.1-umt5", path="umt5.safetensors")
-            model_config.t5_dtype = dtype
         if model_config.model_path is None:
-            model_config.model_path = fetch_modelscope_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
-            model_config.dit_dtype = dtype
+            model_config.model_path = fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors")
+        if model_config.t5_path is None:
+            model_config.t5_path = fetch_model("muse/wan2.1-umt5", path="umt5.safetensors")
+        if model_config.vae_path is None:
+            model_config.vae_path = fetch_model("muse/wan2.1-vae", path="vae.safetensors")
 
-        assert os.path.isfile(model_config.model_path), f"{model_config.model_path} is not a file"
-        assert os.path.isfile(model_config.vae_path), f"{model_config.vae_path} is not a file"
-        assert os.path.isfile(model_config.t5_path), f"{model_config.t5_path} is not a file"
         logger.info(f"loading state dict from {model_config.model_path} ...")
-        dit_state_dict = load_file(model_config.model_path, device="cpu")
+        dit_state_dict = cls.load_model_checkpoint(model_config.model_path, device="cpu", dtype=model_config.dit_dtype)
 
         logger.info(f"loading state dict from {model_config.t5_path} ...")
-        t5_state_dict = load_file(model_config.t5_path, device="cpu")
+        t5_state_dict = cls.load_model_checkpoint(model_config.t5_path, device="cpu", dtype=model_config.t5_dtype)
 
         logger.info(f"loading state dict from {model_config.vae_path} ...")
-        vae_state_dict = load_file(model_config.vae_path, device="cpu")
+        vae_state_dict = cls.load_model_checkpoint(model_config.vae_path, device="cpu", dtype=model_config.vae_dtype)
 
         init_device = "cpu" if offload_mode else device
         tokenizer = WanT5Tokenizer(WAN_TOKENIZER_CONF_PATH, seq_len=512, clean="whitespace")
-        text_encoder = WanTextEncoder.from_state_dict(
-            t5_state_dict, device=init_device, dtype=model_config.t5_dtype
-        ).to(dtype=model_config.t5_dtype)
-        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype).to(
-            dtype=model_config.vae_dtype
-        )
+        text_encoder = WanTextEncoder.from_state_dict(t5_state_dict, device=init_device, dtype=model_config.t5_dtype)
+
+        vae = WanVideoVAE.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
+
         image_encoder = None
         if model_config.image_encoder_path is not None:
             logger.info(f"loading state dict from {model_config.image_encoder_path} ...")
-            image_encoder_state_dict = load_file(model_config.image_encoder_path, device="cpu")
+            image_encoder_state_dict = cls.load_model_checkpoint(
+                model_config.image_encoder_path,
+                device="cpu",
+                dtype=model_config.image_encoder_dtype,
+            )
             image_encoder = WanImageEncoder.from_state_dict(
-                image_encoder_state_dict, device=init_device, dtype=model_config.image_encoder_dtype
-            ).to(dtype=model_config.image_encoder_dtype)
+                image_encoder_state_dict,
+                device=init_device,
+                dtype=model_config.image_encoder_dtype,
+            )
 
-        with LoRAContext():
-            # Check wan video model type from dit state dict
-            model_type = None
-            if "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
-                if image_encoder is not None:
-                    model_type = "14b-i2v"
-                else:
-                    model_type = "14b-t2v"
+        # determine wan video model type by dit params
+        model_type = None
+        if "blocks.39.self_attn.norm_q.weight" in dit_state_dict:
+            if image_encoder is not None:
+                model_type = "14b-i2v"
             else:
-                model_type = "1.3b-t2v"
+                model_type = "14b-t2v"
+        else:
+            model_type = "1.3b-t2v"
 
+        if parallelism > 1:
+            assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
+            if use_cfg_parallel:
+                tensor_parallelism = parallelism // 2
+                batch_parallelism = 2
+                batch_cfg = True
+            else:
+                tensor_parallelism = parallelism
+                batch_parallelism = 1
             dit = WanDiT.from_state_dict(
                 dit_state_dict,
-                device=init_device,
+                model_type=model_type,
+                device="cpu",
                 dtype=model_config.dit_dtype,
-                model_type=model_type
-            ).to(dtype=model_config.dit_dtype)
-
-            if parallelism > 1:
-                assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
-                if use_cfg_parallel:
-                    tensor_parallelism = parallelism // 2
-                    batch_parallelism = 2
-                    batch_cfg = True
-                else:
-                    tensor_parallelism = parallelism 
-                    batch_parallelism = 1                
-                dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device="cpu", dtype=model_config.dit_dtype)
-                dit = ParallelModel(dit, dit.get_tp_plan(), tensor_parallelism=tensor_parallelism, batch_parallelism=batch_parallelism, device='cuda')                    
-            else:
-                with LoRAContext():
-                    dit = WanDiT.from_state_dict(dit_state_dict, model_type=model_type, device=init_device, dtype=model_config.dit_dtype)
+            )
+            dit = ParallelModel(
+                dit,
+                dit.get_tp_plan(),
+                tensor_parallelism=tensor_parallelism,
+                batch_parallelism=batch_parallelism,
+                device="cuda",
+            )
+        else:
+            with LoRAContext():
+                dit = WanDiT.from_state_dict(
+                    dit_state_dict,
+                    model_type=model_type,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                )
 
         pipe = cls(
             config=model_config,

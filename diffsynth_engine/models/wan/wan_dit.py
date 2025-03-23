@@ -3,32 +3,37 @@ import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional
 from einops import rearrange
+
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
     WAN_DIT_1_3B_T2V_CONFIG_FILE,
     WAN_DIT_14B_I2V_CONFIG_FILE,
-    WAN_DIT_14B_T2V_CONFIG_FILE
+    WAN_DIT_14B_T2V_CONFIG_FILE,
 )
 
 
 def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int):
-    q, k, v = (rearrange(t, "b s (n d) -> b n s d ", n=num_heads)
-               for t in (q, k, v))
+    q, k, v = (rearrange(t, "b s (n d) -> b n s d ", n=num_heads) for t in (q, k, v))
     x = F.scaled_dot_product_attention(q, k, v)
     x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     return x
 
+
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
-    return (x * (1 + scale) + shift)
+    return x * (1 + scale) + shift
+
 
 def sinusoidal_embedding_1d(dim, position):
-    sinusoid = torch.outer(position.type(torch.float64), torch.pow(
-        10000, -torch.arange(dim//2, dtype=torch.float64, device=position.device).div(dim//2)))
+    sinusoid = torch.outer(
+        position.type(torch.float64),
+        torch.pow(10000, -torch.arange(dim // 2, dtype=torch.float64, device=position.device).div(dim // 2)),
+    )
     x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
     return x.to(position.dtype)
+
 
 def precompute_freqs_cis_3d(dim: int, end: int = 1024, theta: float = 10000.0):
     # 3d rope precompute
@@ -37,106 +42,96 @@ def precompute_freqs_cis_3d(dim: int, end: int = 1024, theta: float = 10000.0):
     w_freqs_cis = precompute_freqs_cis(dim // 3, end, theta)
     return f_freqs_cis, h_freqs_cis, w_freqs_cis
 
+
 def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     # 1d rope precompute
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)
-                   [: (dim // 2)].double() / dim))
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].double() / dim))
     freqs = torch.outer(torch.arange(end, device=freqs.device), freqs)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
+
 def rope_apply(x, freqs, num_heads):
     x = rearrange(x, "b s (n d) -> b s n d", n=num_heads)
-    x_out = torch.view_as_complex(x.to(torch.float64).reshape(
-        x.shape[0], x.shape[1], x.shape[2], -1, 2))
+    x_out = torch.view_as_complex(x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2))
     x_out = torch.view_as_real(x_out * freqs).flatten(2)
     return x_out.to(x.dtype)
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim, eps=1e-5):
+    def __init__(
+        self,
+        dim,
+        eps=1e-5,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.eps = eps
         self.dim = dim
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def tp_norm(self, x):
-        world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
-        world_size = world_size // 2
-        rank = rank % world_size
-        assert self.dim % world_size == 0
-        dtype, x = x.dtype, x.float()
-        x_pow2 = x.pow(2)
-        torch.distributed.all_reduce(x_pow2)
-        x = x * torch.rsqrt(x_pow2.sum(dim=-1, keepdim=True) / (x.shape[-1] * world_size) + self.eps)
-        local_dim = self.dim // world_size
-        return x.to(dtype) * self.weight.data[rank * local_dim:(rank + 1) * local_dim]
-
-    def local_norm(self, x):
-        world_size, rank = torch.distributed.get_world_size(), torch.distributed.get_rank()
-        world_size = world_size // 2
-        rank = rank % world_size
-        local_dim = self.dim // world_size
-        dtype, x = x.dtype, x.float()        
-        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return x.to(dtype) * self.weight.data[rank * local_dim:(rank + 1) * local_dim]
+        self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
 
     def norm(self, x):
-        dtype, x = x.dtype, x.float()        
-        x = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return x.to(dtype) * self.weight
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
-    def forward(self, x):        
-        if torch.distributed.is_initialized() and x.shape[-1] != self.dim:
-            return self.local_norm(x)
-        else:
-            return self.norm(x)
+    def forward(self, x):
+        return self.norm(x.float()).to(x.dtype) * self.weight
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        eps: float = 1e-6,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.head_dim = dim // num_heads
 
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
-        self.norm_q = RMSNorm(dim, eps=eps)
-        self.norm_k = RMSNorm(dim, eps=eps)
+        self.q = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.k = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.v = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
 
     def forward(self, x, freqs):
         q = self.norm_q(self.q(x))
         k = self.norm_k(self.k(x))
         v = self.v(x)
         num_heads = q.shape[2] // self.head_dim
-        x = attention(
-            q=rope_apply(q, freqs, num_heads),
-            k=rope_apply(k, freqs, num_heads),
-            v=v,
-            num_heads=num_heads
-        )
+        x = attention(q=rope_apply(q, freqs, num_heads), k=rope_apply(k, freqs, num_heads), v=v, num_heads=num_heads)
         return self.o(x)
 
 
 class CrossAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, has_image_input: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        eps: float = 1e-6,
+        has_image_input: bool = False,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.head_dim = dim // num_heads
 
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
-        self.norm_q = RMSNorm(dim, eps=eps)
-        self.norm_k = RMSNorm(dim, eps=eps)
+        self.q = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.k = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.v = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
+        self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
         self.has_image_input = has_image_input
         if has_image_input:
-            self.k_img = nn.Linear(dim, dim)
-            self.v_img = nn.Linear(dim, dim)
-            self.norm_k_img = RMSNorm(dim, eps=eps)
+            self.k_img = nn.Linear(dim, dim, device=device, dtype=dtype)
+            self.v_img = nn.Linear(dim, dim, device=device, dtype=dtype)
+            self.norm_k_img = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         if self.has_image_input:
@@ -158,26 +153,38 @@ class CrossAttention(nn.Module):
 
 
 class DiTBlock(nn.Module):
-    def __init__(self, has_image_input: bool, dim: int, num_heads: int, ffn_dim: int, eps: float = 1e-6):
+    def __init__(
+        self,
+        has_image_input: bool,
+        dim: int,
+        num_heads: int,
+        ffn_dim: int,
+        eps: float = 1e-6,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
 
-        self.self_attn = SelfAttention(dim, num_heads, eps)
+        self.self_attn = SelfAttention(dim, num_heads, eps, device=device, dtype=dtype)
         self.cross_attn = CrossAttention(
-            dim, num_heads, eps, has_image_input=has_image_input)
-        self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
-        self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
-        self.norm3 = nn.LayerNorm(dim, eps=eps)
-        self.ffn = nn.Sequential(nn.Linear(dim, ffn_dim), nn.GELU(
-            approximate='tanh'), nn.Linear(ffn_dim, dim))
-        self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
+            dim, num_heads, eps, has_image_input=has_image_input, device=device, dtype=dtype
+        )
+        self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
+        self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
+        self.norm3 = nn.LayerNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, ffn_dim, device=device, dtype=dtype),
+            nn.GELU(approximate="tanh"),
+            nn.Linear(ffn_dim, dim, device=device, dtype=dtype),
+        )
+        self.modulation = nn.Parameter(torch.randn(1, 6, dim, device=device, dtype=dtype) / dim**0.5)
 
     def forward(self, x, context, t_mod, freqs):
         # msa: multi-head self-attention  mlp: multi-layer perceptron
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.modulation + t_mod).chunk(6, dim=1)        
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (self.modulation + t_mod).chunk(6, dim=1)
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
         x = x + gate_msa * self.self_attn(input_x, freqs)
         x = x + self.cross_attn(self.norm3(x), context)
@@ -187,14 +194,20 @@ class DiTBlock(nn.Module):
 
 
 class MLP(torch.nn.Module):
-    def __init__(self, in_dim, out_dim):
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.proj = torch.nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, in_dim),
+            nn.LayerNorm(in_dim, device=device, dtype=dtype),
+            nn.Linear(in_dim, in_dim, device=device, dtype=dtype),
             nn.GELU(),
-            nn.Linear(in_dim, out_dim),
-            nn.LayerNorm(out_dim)
+            nn.Linear(in_dim, out_dim, device=device, dtype=dtype),
+            nn.LayerNorm(out_dim, device=device, dtype=dtype),
         )
 
     def forward(self, x):
@@ -202,13 +215,21 @@ class MLP(torch.nn.Module):
 
 
 class Head(nn.Module):
-    def __init__(self, dim: int, out_dim: int, patch_size: Tuple[int, int, int], eps: float):
+    def __init__(
+        self,
+        dim: int,
+        out_dim: int,
+        patch_size: Tuple[int, int, int],
+        eps: float,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
-        self.norm = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
-        self.head = nn.Linear(dim, out_dim * math.prod(patch_size))
-        self.modulation = nn.Parameter(torch.randn(1, 2, dim) / dim**0.5)
+        self.norm = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
+        self.head = nn.Linear(dim, out_dim * math.prod(patch_size), device=device, dtype=dtype)
+        self.modulation = nn.Parameter(torch.randn(1, 2, dim, device=device, dtype=dtype) / dim**0.5)
 
     def forward(self, x, t_mod):
         shift, scale = (self.modulation + t_mod).chunk(2, dim=1)
@@ -223,6 +244,7 @@ class WanDiTStateDictConverter(StateDictConverter):
 
 class WanDiT(PreTrainedModel):
     converter = WanDiTStateDictConverter()
+
     def __init__(
         self,
         dim: int,
@@ -236,8 +258,8 @@ class WanDiT(PreTrainedModel):
         num_heads: int,
         num_layers: int,
         has_image_input: bool,
-        device: str = 'cpu',
-        dtype: torch.dtype = torch.bfloat16
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
 
@@ -247,63 +269,81 @@ class WanDiT(PreTrainedModel):
         self.patch_size = patch_size
 
         self.patch_embedding = nn.Conv3d(
-            in_dim, dim, kernel_size=patch_size, stride=patch_size)
+            in_dim, dim, kernel_size=patch_size, stride=patch_size, device=device, dtype=dtype
+        )
         self.text_embedding = nn.Sequential(
-            nn.Linear(text_dim, dim),
-            nn.GELU(approximate='tanh'),
-            nn.Linear(dim, dim)
+            nn.Linear(text_dim, dim, device=device, dtype=dtype),
+            nn.GELU(approximate="tanh"),
+            nn.Linear(dim, dim, device=device, dtype=dtype),
         )
         self.time_embedding = nn.Sequential(
-            nn.Linear(freq_dim, dim),
+            nn.Linear(freq_dim, dim, device=device, dtype=dtype),
             nn.SiLU(),
-            nn.Linear(dim, dim)
+            nn.Linear(dim, dim, device=device, dtype=dtype),
         )
-        self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
-        self.blocks = nn.ModuleList([
-            DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps)
-            for _ in range(num_layers)
-        ])
-        self.head = Head(dim, out_dim, patch_size, eps)
+        self.time_projection = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(dim, dim * 6, device=device, dtype=dtype),
+        )
+        self.blocks = nn.ModuleList(
+            [
+                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, device=device, dtype=dtype)
+                for _ in range(num_layers)
+            ]
+        )
+        self.head = Head(dim, out_dim, patch_size, eps, device=device, dtype=dtype)
         head_dim = dim // num_heads
         self.freqs = precompute_freqs_cis_3d(head_dim)
 
         if has_image_input:
-            self.img_emb = MLP(1280, dim)  # clip_feature_dim = 1280
+            self.img_emb = MLP(1280, dim, device=device, dtype=dtype)  # clip_feature_dim = 1280
 
     def patchify(self, x: torch.Tensor):
-        x = self.patch_embedding(x) # b c f h w -> b 4c f h/2 w/2
+        x = self.patch_embedding(x)  # b c f h w -> b 4c f h/2 w/2
         grid_size = x.shape[2:]
-        x = rearrange(x, 'b c f h w -> b (f h w) c').contiguous()
+        x = rearrange(x, "b c f h w -> b (f h w) c").contiguous()
         return x, grid_size  # x, grid_size: (f, h, w)
 
     def unpatchify(self, x: torch.Tensor, grid_size: torch.Tensor):
         return rearrange(
-            x, 'b (f h w) (x y z c) -> b c (f x) (h y) (w z)',
-            f=grid_size[0], h=grid_size[1], w=grid_size[2], 
-            x=self.patch_size[0], y=self.patch_size[1], z=self.patch_size[2]
+            x,
+            "b (f h w) (x y z c) -> b c (f x) (h y) (w z)",
+            f=grid_size[0],
+            h=grid_size[1],
+            w=grid_size[2],
+            x=self.patch_size[0],
+            y=self.patch_size[1],
+            z=self.patch_size[2],
         )
 
-    def forward(self,
+    def forward(
+        self,
         x: torch.Tensor,
         context: torch.Tensor,
         timestep: torch.Tensor,
-        clip_feature: Optional[torch.Tensor] = None, # clip_vision_encoder(img)
-        y: Optional[torch.Tensor] = None # vae_encoder(img)
+        clip_feature: Optional[torch.Tensor] = None,  # clip_vision_encoder(img)
+        y: Optional[torch.Tensor] = None,  # vae_encoder(img)
     ):
-        t = self.time_embedding(
-            sinusoidal_embedding_1d(self.freq_dim, timestep))
+        t = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, timestep))
         t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
         context = self.text_embedding(context)
         if self.has_image_input:
             x = torch.cat([x, y], dim=1)  # (b, c_x + c_y, f, h, w)
             clip_embdding = self.img_emb(clip_feature)
-            context = torch.cat([clip_embdding, context], dim=1) # (b, s1 + s2, d)
+            context = torch.cat([clip_embdding, context], dim=1)  # (b, s1 + s2, d)
         x, (f, h, w) = self.patchify(x)
-        freqs = torch.cat([
-            self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
-            self.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
-            self.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
-        ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
+        freqs = (
+            torch.cat(
+                [
+                    self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+                    self.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+                    self.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
+                ],
+                dim=-1,
+            )
+            .reshape(f * h * w, 1, -1)
+            .to(x.device)
+        )
         for block in self.blocks:
             x = block(x, context, t_mod, freqs)
         x = self.head(x, t)
@@ -311,42 +351,81 @@ class WanDiT(PreTrainedModel):
         return x
 
     @classmethod
-    def from_state_dict(cls, state_dict, device, dtype, model_type='1.3b-t2v', assign=True):
-        if model_type == '1.3b-t2v':
-            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, 'r'))
-        elif model_type == '14b-t2v':
-            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, 'r'))
-        elif model_type == '14b-i2v':
-            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, 'r'))
+    def from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+        model_type: str = "1.3b-t2v",
+    ):
+        if model_type == "1.3b-t2v":
+            config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, "r"))
+        elif model_type == "14b-t2v":
+            config = json.load(open(WAN_DIT_14B_T2V_CONFIG_FILE, "r"))
+        elif model_type == "14b-i2v":
+            config = json.load(open(WAN_DIT_14B_I2V_CONFIG_FILE, "r"))
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(
-                cls, **config, device=device, dtype=dtype)
-        model.load_state_dict(state_dict, assign=assign)
-        model.to(device=device, dtype=dtype)
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
-
     def get_tp_plan(self):
-        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, SequenceParallel
-        tp_plan = {}
+        from torch.distributed.tensor.parallel import (
+            ColwiseParallel,
+            RowwiseParallel,
+            SequenceParallel,
+            PrepareModuleOutput,
+        )
+        from torch.distributed.tensor import Replicate, Shard
+
+        tp_plan = {
+            "text_embedding.0": ColwiseParallel(),
+            "text_embedding.2": RowwiseParallel(),
+            "time_embedding.0": ColwiseParallel(),
+            "time_embedding.2": RowwiseParallel(),
+            "time_projection.1": ColwiseParallel(output_layouts=Replicate()),
+        }
         for idx in range(len(self.blocks)):
-            tp_plan.update({
-                f'blocks.{idx}.norm1': SequenceParallel(use_local_output=True),
-                f'blocks.{idx}.norm2': SequenceParallel(use_local_output=True),                
-                f'blocks.{idx}.norm3': SequenceParallel(use_local_output=True),
-                f'blocks.{idx}.ffn.0': ColwiseParallel(),
-                f'blocks.{idx}.ffn.2': RowwiseParallel(),
-                f"blocks.{idx}.self_attn.q": ColwiseParallel(),
-                f"blocks.{idx}.self_attn.k": ColwiseParallel(),
-                f"blocks.{idx}.self_attn.v": ColwiseParallel(),
-                f"blocks.{idx}.self_attn.o": RowwiseParallel(),
-                f"blocks.{idx}.cross_attn.q": ColwiseParallel(),
-                f"blocks.{idx}.cross_attn.k": ColwiseParallel(),
-                f"blocks.{idx}.cross_attn.v": ColwiseParallel(),
-                f"blocks.{idx}.cross_attn.o": RowwiseParallel(),
-                f"blocks.{idx}.cross_attn.k_img": ColwiseParallel(),
-                f"blocks.{idx}.cross_attn.v_img": ColwiseParallel()
-            })
+            tp_plan.update(
+                {
+                    f"blocks.{idx}.norm1": SequenceParallel(use_local_output=True),
+                    f"blocks.{idx}.norm2": SequenceParallel(use_local_output=True),
+                    f"blocks.{idx}.norm3": SequenceParallel(use_local_output=True),
+                    f"blocks.{idx}.ffn.0": ColwiseParallel(),
+                    f"blocks.{idx}.ffn.2": RowwiseParallel(),
+                    f"blocks.{idx}.self_attn.q": ColwiseParallel(output_layouts=Replicate()),
+                    f"blocks.{idx}.self_attn.k": ColwiseParallel(output_layouts=Replicate()),
+                    f"blocks.{idx}.self_attn.v": ColwiseParallel(),
+                    f"blocks.{idx}.self_attn.o": RowwiseParallel(),
+                    f"blocks.{idx}.self_attn.norm_q": PrepareModuleOutput(
+                        output_layouts=Replicate(),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.self_attn.norm_k": PrepareModuleOutput(
+                        output_layouts=Replicate(),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn.q": ColwiseParallel(output_layouts=Replicate()),
+                    f"blocks.{idx}.cross_attn.k": ColwiseParallel(output_layouts=Replicate()),
+                    f"blocks.{idx}.cross_attn.v": ColwiseParallel(),
+                    f"blocks.{idx}.cross_attn.o": RowwiseParallel(),
+                    f"blocks.{idx}.cross_attn.norm_q": PrepareModuleOutput(
+                        output_layouts=Replicate(),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn.norm_k": PrepareModuleOutput(
+                        output_layouts=Replicate(),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                    f"blocks.{idx}.cross_attn.k_img": ColwiseParallel(output_layouts=Replicate()),
+                    f"blocks.{idx}.cross_attn.v_img": ColwiseParallel(),
+                    f"blocks.{idx}.cross_attn.norm_k_img": PrepareModuleOutput(
+                        output_layouts=Replicate(),
+                        desired_output_layouts=Shard(-1),
+                    ),
+                }
+            )
         return tp_plan

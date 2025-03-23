@@ -82,7 +82,11 @@ class ImageTestCase(TestCase):
             input_image.save(f"{name}")
             raise e
 
+
 class VideoTestCase(TestCase):
+    @staticmethod
+    def get_input_image(name) -> Image.Image:
+        return Image.open(ImageTestCase.testdata_dir / f"input/{name}")
 
     @staticmethod
     def get_expect_video(name) -> VideoReader:
@@ -92,17 +96,21 @@ class VideoTestCase(TestCase):
     def get_input_video(name) -> VideoReader:
         return load_video(VideoTestCase.testdata_dir / "input" / f"{name}")
 
-    def save_video(self, video: List[Image.Image], name: str, fps:int=15):
+    def save_video(self, video: List[Image.Image], name: str, fps: int = 15):
         save_video(video, name, fps=fps)
 
-    def assertVideoEqual(self, input_video: List[Image.Image], expect_video: VideoReader, threshold=0.965, fps:int=15):
+    def assertVideoEqual(
+        self, input_video: List[Image.Image], expect_video: VideoReader, threshold=0.965, fps: int = 15
+    ):
         ssim_list = []
         for i in range(len(input_video)):
             ssim_list.append(compute_normalized_ssim(input_video[i], expect_video[i]))
         ssim_mean = np.mean(ssim_list)
         self.assertGreaterEqual(ssim_mean, threshold)
 
-    def assertVideoEqualAndSaveFailed(self, input_video: List[Image.Image], expect_video_path: str, threshold=0.965, fps:int=15):
+    def assertVideoEqualAndSaveFailed(
+        self, input_video: List[Image.Image], expect_video_path: str, threshold=0.965, fps: int = 15
+    ):
         """
         比较input_video和testdata/expect/{name}的SSIM相似度，如果失败则保存input_video到当前工作目录
         """
@@ -113,4 +121,3 @@ class VideoTestCase(TestCase):
             name = expect_video_path.split("/")[-1]
             self.save_video(input_video, name, fps=fps)
             raise e
-

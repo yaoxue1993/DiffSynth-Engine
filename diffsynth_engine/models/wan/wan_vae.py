@@ -514,7 +514,7 @@ class WanVideoVAEStateDictConverter(StateDictConverter):
 class WanVideoVAE(PreTrainedModel):
     converter = WanVideoVAEStateDictConverter()
 
-    def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.bfloat16):
+    def __init__(self, z_dim=16, device: str = "cuda:0", dtype: torch.dtype = torch.float32):
         super().__init__()
 
         mean = [
@@ -565,7 +565,8 @@ class WanVideoVAE(PreTrainedModel):
     def from_state_dict(cls, state_dict, device="cuda:0", dtype=torch.float32) -> "WanVideoVAE":
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, assign=True)
+        model.to(device=device, dtype=dtype, non_blocking=True)
         return model
 
     def build_1d_mask(self, length, left_bound, right_bound, border_width):
