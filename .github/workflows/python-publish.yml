@@ -4,12 +4,12 @@ on:
   push:
     tags:
       - 'v**'
-  
+
   workflow_dispatch:
     inputs:
       branch:
-      required: true
-      default: 'main'
+        required: true
+        default: 'main'
 
 permissions:
   contents: read
