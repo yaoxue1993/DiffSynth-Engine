@@ -115,7 +115,7 @@ image.save("image.png")
 
 #### 显存优化
 
-DiffSynth-Engine 支持细粒度的显存优化，让模型能够在低显存GPU上运行。例如，在 `bfloat16` 精度下，FLUX 模型需要 22.83GB 显存才能进行推理，添加参数 `offload_mode="sequential_cpu_offload"` 后，只需要 4.30GB 显存即可推理，但推理时间有一定的延长。
+DiffSynth-Engine 支持不同粒度的显存优化，让模型能够在低显存GPU上运行。例如，在 `bfloat16` 精度且不开启任何显存优化选项的情况下，FLUX 模型需要 35.84GB 显存才能进行推理。添加参数 `offload_mode="cpu_offload"` 后，显存需求降低到 22.83GB；进一步使用参数 `offload_mode="sequential_cpu_offload"` 后，只需要 4.30GB 显存即可进行推理，但推理时间有一定的延长。
 
 ```python
 from diffsynth_engine import fetch_model, FluxImagePipeline
@@ -128,7 +128,7 @@ image.save("image.png")
 
 ### 视频生成
 
-DiffSynth-Engine 也支持视频生成，支持开启张量并行，方便进行多GPU的模型部署推理。以下代码可以加载[通义万相视频生成模型](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B)并生成视频。
+DiffSynth-Engine 也支持视频生成，以下代码可以加载[通义万相视频生成模型](https://modelscope.cn/models/Wan-AI/Wan2.1-T2V-1.3B)并生成视频。
 
 ```python
 from diffsynth_engine.pipelines.wan_video import WanVideoPipeline, WanModelConfig
@@ -137,8 +137,8 @@ from diffsynth_engine import fetch_model
 
 config = WanModelConfig(
     model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
-    t5_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
+    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
+    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
 )
 pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
@@ -175,11 +175,11 @@ from diffsynth_engine import fetch_model
 
 config = WanModelConfig(
     model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
-    t5_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
+    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
+    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
 )
 lora_path = fetch_model("DiffSynth-Studio/Wan2.1-1.3b-lora-highresfix-v1", path="model.safetensors")
-pipe = WanVideoPipeline.from_pretrained(config, device="cuda", parallelism=4, use_cfg_parallel=True)
+pipe = WanVideoPipeline.from_pretrained(config, device="cuda")
 pipe.load_lora(path=lora_path, scale=1.0)
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
 save_video(video, "video.mp4")
@@ -198,8 +198,8 @@ from diffsynth_engine import fetch_model
 
 config = WanModelConfig(
     model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
-    vae_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
-    t5_path=fetch_model("MusePublic/xxx", path="xxx.safetensors"),
+    vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
+    t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
 )
 pipe = WanVideoPipeline.from_pretrained(config, device="cuda", parallelism=4, use_cfg_parallel=True)
 video = pipe(prompt="一只活泼的小狗在绿茵茵的草地上迅速奔跑。小狗毛色棕黄，两只耳朵立起，神情专注而欢快。阳光洒在它身上，使得毛发看上去格外柔软而闪亮。")
