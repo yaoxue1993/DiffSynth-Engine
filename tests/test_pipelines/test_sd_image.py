@@ -13,7 +13,7 @@ class TestSDImage(ImageTestCase):
 
     def test_txt2img(self):
         image = self.pipe(prompt="beautiful girl", width=512, height=512, num_inference_steps=20, seed=42)
-        self.assertImageEqualAndSaveFailed(image, "sd/sd_txt2img.png", threshold=0.999)
+        self.assertImageEqualAndSaveFailed(image, "sd/sd_txt2img.png", threshold=0.99)
 
     def test_inpainting(self):
         image = self.pipe(

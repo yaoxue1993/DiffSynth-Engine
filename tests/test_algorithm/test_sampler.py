@@ -1,5 +1,3 @@
-import torch
-
 from ..common.test_case import ImageTestCase
 from diffsynth_engine.algorithm.sampler import EulerSampler, FlowMatchEulerSampler
 from diffsynth_engine.algorithm.noise_scheduler import ScaledLinearScheduler, RecifitedFlowScheduler
@@ -24,10 +22,12 @@ class TestSampler(ImageTestCase):
         width = 1024
         height = 1024
         num_inference_steps = 20
-        sigmas = torch.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
         scheduler = RecifitedFlowScheduler(use_dynamic_shifting=True)
         sigmas, timesteps = scheduler.schedule(
-            num_inference_steps, mu=calculate_shift(width // 16 * height // 16), sigmas=sigmas
+            num_inference_steps,
+            mu=calculate_shift(width // 16 * height // 16),
+            sigma_min=1.0 / num_inference_steps,
+            sigma_max=1.0,
         )
 
         sampler = FlowMatchEulerSampler()
