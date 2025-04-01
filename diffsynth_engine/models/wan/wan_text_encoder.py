@@ -6,6 +6,10 @@ from typing import Dict
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
+from diffsynth_engine.utils.gguf import gguf_inference
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
 
 
 def fp16_clamp(x):
@@ -192,13 +196,40 @@ def init_weights(m):
 
 
 class WanTextEncoderStateDictConverter(StateDictConverter):
-    def from_diffusers(self, state_dict):
-        return state_dict
+    def __init__(self, num_encoder_layers: int = 24):
+        self.num_encoder_layers = num_encoder_layers
 
-    def from_civitai(self, state_dict):
-        return state_dict
+    def _from_diffusers(self, state_dict):
+        rename_dict = {
+            "enc.output_norm.weight": "norm.weight",
+            "token_embd.weight": "token_embedding.weight",
+        }
+        for i in range(self.num_encoder_layers):
+            rename_dict.update(
+                {
+                    f"enc.blk.{i}.attn_q.weight": f"blocks.{i}.attn.q.weight",
+                    f"enc.blk.{i}.attn_k.weight": f"blocks.{i}.attn.k.weight",
+                    f"enc.blk.{i}.attn_v.weight": f"blocks.{i}.attn.v.weight",
+                    f"enc.blk.{i}.attn_o.weight": f"blocks.{i}.attn.o.weight",
+                    f"enc.blk.{i}.ffn_up.weight": f"blocks.{i}.ffn.fc1.weight",
+                    f"enc.blk.{i}.ffn_down.weight": f"blocks.{i}.ffn.fc2.weight",
+                    f"enc.blk.{i}.ffn_gate.weight": f"blocks.{i}.ffn.gate.0.weight",
+                    f"enc.blk.{i}.attn_norm.weight": f"blocks.{i}.norm1.weight",
+                    f"enc.blk.{i}.ffn_norm.weight": f"blocks.{i}.norm2.weight",
+                    f"enc.blk.{i}.attn_rel_b.weight": f"blocks.{i}.pos_embedding.embedding.weight",
+                }
+            )
+
+        new_state_dict = {}
+        for key, param in state_dict.items():
+            if key in rename_dict:
+                new_state_dict[rename_dict[key]] = param
+        return new_state_dict
 
     def convert(self, state_dict):
+        if "enc.output_norm.weight" in state_dict:
+            logger.info("use diffusers format state dict")
+            return self._from_diffusers(state_dict)
         return state_dict
 
 
@@ -241,14 +272,15 @@ class WanTextEncoder(PreTrainedModel):
         self.norm = T5LayerNorm(dim)
 
     def forward(self, ids, mask=None):
-        x = self.token_embedding(ids)
-        x = self.dropout(x)
-        e = self.pos_embedding(x.size(1), x.size(1)) if self.shared_pos else None
-        for block in self.blocks:
-            x = block(x, mask, pos_bias=e)
-        x = self.norm(x)
-        x = self.dropout(x)
-        return x
+        with gguf_inference():
+            x = self.token_embedding(ids)
+            x = self.dropout(x)
+            e = self.pos_embedding(x.size(1), x.size(1)) if self.shared_pos else None
+            for block in self.blocks:
+                x = block(x, mask, pos_bias=e)
+            x = self.norm(x)
+            x = self.dropout(x)
+            return x
 
     @classmethod
     def from_state_dict(
@@ -259,6 +291,7 @@ class WanTextEncoder(PreTrainedModel):
     ):
         with no_init_weights():
             model = torch.nn.utils.skip_init(cls, device=device, dtype=dtype)
+            model = model.requires_grad_(False)  # for loading gguf
         model.load_state_dict(state_dict, assign=True)
         model.to(device=device, dtype=dtype, non_blocking=True)
         return model
