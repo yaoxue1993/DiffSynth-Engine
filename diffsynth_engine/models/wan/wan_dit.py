@@ -2,8 +2,7 @@ import math
 import json
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Dict, Tuple, Optional
+from typing import Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
@@ -13,14 +12,9 @@ from diffsynth_engine.utils.constants import (
     WAN_DIT_14B_I2V_CONFIG_FILE,
     WAN_DIT_14B_T2V_CONFIG_FILE,
 )
+
 from diffsynth_engine.utils.gguf import gguf_inference
-
-
-def attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int):
-    q, k, v = (rearrange(t, "b s (n d) -> b n s d ", n=num_heads) for t in (q, k, v))
-    x = F.scaled_dot_product_attention(q, k, v)
-    x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
-    return x
+from diffsynth_engine.models.basic.attention import attention
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
@@ -52,11 +46,10 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     return freqs_cis
 
 
-def rope_apply(x, freqs, num_heads):
-    x = rearrange(x, "b s (n d) -> b s n d", n=num_heads)
+def rope_apply(x, freqs):
     x_out = torch.view_as_complex(x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2))
-    x_out = torch.view_as_real(x_out * freqs).flatten(2)
-    return x_out.to(x.dtype)
+    x_out = torch.view_as_real(x_out * freqs)
+    return x_out.to(x.dtype).flatten(3)
 
 
 class RMSNorm(nn.Module):
@@ -85,26 +78,28 @@ class SelfAttention(nn.Module):
         dim: int,
         num_heads: int,
         eps: float = 1e-6,
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
         self.dim = dim
         self.head_dim = dim // num_heads
-
         self.q = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.k = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.v = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.o = nn.Linear(dim, dim, device=device, dtype=dtype)
         self.norm_q = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
         self.norm_k = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.attn_impl = attn_impl
 
     def forward(self, x, freqs):
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(x))
-        v = self.v(x)
+        q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
         num_heads = q.shape[2] // self.head_dim
-        x = attention(q=rope_apply(q, freqs, num_heads), k=rope_apply(k, freqs, num_heads), v=v, num_heads=num_heads)
+        q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
+        k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
+        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
+        x = attention(q=rope_apply(q, freqs), k=rope_apply(k, freqs), v=v, attn_impl=self.attn_impl).flatten(2)
         return self.o(x)
 
 
@@ -115,6 +110,7 @@ class CrossAttention(nn.Module):
         num_heads: int,
         eps: float = 1e-6,
         has_image_input: bool = False,
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -133,6 +129,7 @@ class CrossAttention(nn.Module):
             self.k_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.v_img = nn.Linear(dim, dim, device=device, dtype=dtype)
             self.norm_k_img = RMSNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.attn_impl = attn_impl
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         if self.has_image_input:
@@ -140,15 +137,17 @@ class CrossAttention(nn.Module):
             ctx = y[:, 257:]
         else:
             ctx = y
-        q = self.norm_q(self.q(x))
-        k = self.norm_k(self.k(ctx))
-        v = self.v(ctx)
+        q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(ctx)), self.v(ctx)
         num_heads = q.shape[2] // self.head_dim
-        x = attention(q, k, v, num_heads=num_heads)
+        q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
+        k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
+        v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
+
+        x = attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
         if self.has_image_input:
-            k_img = self.norm_k_img(self.k_img(img))
-            v_img = self.v_img(img)
-            y = attention(q, k_img, v_img, num_heads=num_heads)
+            k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
+            k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
+            y = attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
             x = x + y
         return self.o(x)
 
@@ -161,6 +160,7 @@ class DiTBlock(nn.Module):
         num_heads: int,
         ffn_dim: int,
         eps: float = 1e-6,
+        attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -168,10 +168,9 @@ class DiTBlock(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
-
-        self.self_attn = SelfAttention(dim, num_heads, eps, device=device, dtype=dtype)
+        self.self_attn = SelfAttention(dim, num_heads, eps, attn_impl=attn_impl, device=device, dtype=dtype)
         self.cross_attn = CrossAttention(
-            dim, num_heads, eps, has_image_input=has_image_input, device=device, dtype=dtype
+            dim, num_heads, eps, has_image_input=has_image_input, attn_impl=attn_impl, device=device, dtype=dtype
         )
         self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
         self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False, device=device, dtype=dtype)
@@ -259,7 +258,8 @@ class WanDiT(PreTrainedModel):
         num_heads: int,
         num_layers: int,
         has_image_input: bool,
-        device: str = "cuda:0",
+        attn_impl: Optional[str] = None,
+        device: str = "cpu",
         dtype: torch.dtype = torch.bfloat16,
     ):
         super().__init__()
@@ -282,17 +282,19 @@ class WanDiT(PreTrainedModel):
             nn.SiLU(),
             nn.Linear(dim, dim, device=device, dtype=dtype),
         )
+
         self.time_projection = nn.Sequential(
             nn.SiLU(),
             nn.Linear(dim, dim * 6, device=device, dtype=dtype),
         )
         self.blocks = nn.ModuleList(
             [
-                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, device=device, dtype=dtype)
+                DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, attn_impl, device=device, dtype=dtype)
                 for _ in range(num_layers)
             ]
         )
         self.head = Head(dim, out_dim, patch_size, eps, device=device, dtype=dtype)
+
         head_dim = dim // num_heads
         self.freqs = precompute_freqs_cis_3d(head_dim)
 
@@ -354,11 +356,7 @@ class WanDiT(PreTrainedModel):
 
     @classmethod
     def from_state_dict(
-        cls,
-        state_dict: Dict[str, torch.Tensor],
-        device: str,
-        dtype: torch.dtype,
-        model_type: str = "1.3b-t2v",
+        cls, state_dict, device, dtype, model_type="1.3b-t2v", attn_impl: Optional[str] = None, assign=True
     ):
         if model_type == "1.3b-t2v":
             config = json.load(open(WAN_DIT_1_3B_T2V_CONFIG_FILE, "r"))
@@ -369,10 +367,10 @@ class WanDiT(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
         with no_init_weights():
-            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype)
-            model = model.requires_grad_(False)  # for loading gguf
-        model.load_state_dict(state_dict, assign=True)
-        model.to(device=device, dtype=dtype, non_blocking=True)
+            model = torch.nn.utils.skip_init(cls, **config, device=device, dtype=dtype, attn_impl=attn_impl)
+            model = model.requires_grad_(False)
+        model.load_state_dict(state_dict, assign=assign)
+        model.to(device=device, dtype=dtype)
         return model
 
     def get_tp_plan(self):

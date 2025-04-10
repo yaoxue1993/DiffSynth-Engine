@@ -3,7 +3,7 @@ from diffsynth_engine.pipelines import WanVideoPipeline, WanModelConfig
 from diffsynth_engine.utils.download import fetch_model
 
 
-class TestWanVideo(VideoTestCase):
+class TestWanVideoTP(VideoTestCase):
     @classmethod
     def setUpClass(cls):
         config = WanModelConfig(
@@ -11,7 +11,7 @@ class TestWanVideo(VideoTestCase):
             t5_path=fetch_model("muse/wan2.1-umt5", path="umt5.safetensors"),
             vae_path=fetch_model("muse/wan2.1-vae", path="vae.safetensors"),
         )
-        cls.pipe = WanVideoPipeline.from_pretrained(config)
+        cls.pipe = WanVideoPipeline.from_pretrained(config, parallelism=4, use_cfg_parallel=True)
 
     def test_txt2video(self):
         video = self.pipe(
@@ -21,4 +21,5 @@ class TestWanVideo(VideoTestCase):
             width=480,
             height=480,
         )
-        self.save_video(video, "wan_t2v.mp4")
+        self.save_video(video, "wan_tp_t2v.mp4")
+        del self.pipe

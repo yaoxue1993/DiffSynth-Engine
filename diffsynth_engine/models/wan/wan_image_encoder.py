@@ -7,7 +7,7 @@ import torchvision.transforms as T
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
 from diffsynth_engine.models.utils import no_init_weights
-from .attention import attention
+from diffsynth_engine.models.basic.attention import attention
 
 
 def pos_interpolate(pos, seq_len):
@@ -63,8 +63,7 @@ class SelfAttention(nn.Module):
         q, k, v = self.to_qkv(x).view(b, s, 3, n, d).unbind(2)
 
         # compute attention
-        p = self.attn_dropout if self.training else 0.0
-        x = attention(q, k, v, dropout_p=p, causal=self.causal, fa_version=2)
+        x = attention(q, k, v)
         x = x.reshape(b, s, c)
 
         # output
