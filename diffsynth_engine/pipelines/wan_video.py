@@ -1,8 +1,8 @@
-import logging
 import torch
 import numpy as np
 from einops import rearrange
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, List, Tuple, Optional
 from tqdm import tqdm
 from PIL import Image
@@ -20,10 +20,11 @@ from diffsynth_engine.pipelines import BasePipeline
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.loader import load_file
-from diffsynth_engine.utils.parallel import ParallelModel
+from diffsynth_engine.utils.parallel import ParallelModel, shard_model
+from diffsynth_engine.utils import logging
 
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 
 @dataclass
@@ -39,6 +40,11 @@ class WanModelConfig:
     image_encoder_dtype: torch.dtype = torch.bfloat16
 
     dit_attn_impl: Optional[str] = "auto"
+    dit_fsdp: bool = False
+
+    sp_ulysses_degree: Optional[int] = None
+    sp_ring_degree: Optional[int] = None
+    tp_degree: Optional[int] = None
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -459,27 +465,56 @@ class WanVideoPipeline(BasePipeline):
 
         if parallelism > 1:
             assert parallelism in (2, 4, 8), "parallelism must be 2, 4 or 8"
-            if use_cfg_parallel:
-                tensor_parallelism = parallelism // 2
-                batch_parallelism = 2
-                batch_cfg = True
+            batch_cfg = True if use_cfg_parallel else batch_cfg
+            cfg_degree = 2 if use_cfg_parallel else 1
+            sp_ulysses_degree = model_config.sp_ulysses_degree
+            sp_ring_degree = model_config.sp_ring_degree
+            tp_degree = model_config.tp_degree
+
+            if tp_degree is not None:
+                assert sp_ulysses_degree is None and sp_ring_degree is None, (
+                    "sequence parallel and tensor parallel does not work together"
+                )
+                assert model_config.dit_fsdp is False, (
+                    "fully sharded data parallel and tensor parallel does not work together"
+                )
+                assert parallelism == cfg_degree * tp_degree, (
+                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * tp_degree ({tp_degree})"
+                )
+                sp_ulysses_degree = 1
+                sp_ring_degree = 1
+            elif sp_ulysses_degree is None and sp_ring_degree is None:
+                # use ulysses if not specified
+                sp_ulysses_degree = parallelism // cfg_degree
+                sp_ring_degree = 1
+                tp_degree = 1
+            elif sp_ulysses_degree is not None and sp_ring_degree is not None:
+                assert parallelism == cfg_degree * sp_ulysses_degree * sp_ring_degree, (
+                    f"parallelism ({parallelism}) must be equal to cfg_degree ({cfg_degree}) * "
+                    f"sp_ulysses_degree ({sp_ulysses_degree}) * sp_ring_degree ({sp_ring_degree})"
+                )
+                tp_degree = 1
             else:
-                tensor_parallelism = parallelism
-                batch_parallelism = 1
-            dit = WanDiT.from_state_dict(
-                dit_state_dict,
-                model_type=model_type,
-                device="cpu",
-                dtype=model_config.dit_dtype,
-                attn_impl=model_config.dit_attn_impl,
-            )
-            dit = ParallelModel(
-                dit,
-                dit.get_tp_plan(),
-                tensor_parallelism=tensor_parallelism,
-                batch_parallelism=batch_parallelism,
-                device="cuda",
-            )
+                raise ValueError("sp_ulysses_degree and sp_ring_degree must be specified at the same time")
+
+            with LoRAContext():
+                dit = WanDiT.from_state_dict(
+                    dit_state_dict,
+                    model_type=model_type,
+                    device="cpu",
+                    dtype=model_config.dit_dtype,
+                    attn_impl=model_config.dit_attn_impl,
+                    use_usp=(sp_ulysses_degree * sp_ring_degree > 1),
+                )
+                dit = ParallelModel(
+                    dit,
+                    cfg_degree=cfg_degree,
+                    sp_ulysses_degree=sp_ulysses_degree,
+                    sp_ring_degree=sp_ring_degree,
+                    tp_degree=tp_degree,
+                    shard_fn=partial(shard_model, wrap_module_names=["blocks"]) if model_config.dit_fsdp else None,
+                    device="cuda",
+                )
         else:
             with LoRAContext():
                 dit = WanDiT.from_state_dict(
@@ -507,3 +542,6 @@ class WanVideoPipeline(BasePipeline):
         elif offload_mode == "sequential_cpu_offload":
             pipe.enable_sequential_cpu_offload()
         return pipe
+
+    def __del__(self):
+        del self.dit

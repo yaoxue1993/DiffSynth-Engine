@@ -1,39 +1,145 @@
-import logging
 import os
 import copy
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
 import torch.distributed as dist
-from typing import Optional, Union, Dict
-
-from torch.distributed.device_mesh import init_device_mesh, DeviceMesh
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor.parallel.style import ParallelStyle
 from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
+from datetime import timedelta
+from functools import partial
+from typing import Callable, Dict, List, Union, Optional
+from yunchang.globals import Singleton, set_seq_parallel_pg
 
-logger = logging.getLogger(__name__)
+from diffsynth_engine.utils import logging
+
+logger = logging.get_logger(__name__)
 
 
-def wait_tensor(data):
+class ProcessGroupSingleton(Singleton):
+    def __init__(self):
+        self.CFG_GROUP: dist.ProcessGroup = None
+        self.SP_GROUP: dist.ProcessGroup = None
+        self.TP_GROUP: dist.ProcessGroup = None
+
+        self.CFG_RANKS: List[int] = []
+        self.SP_RANKS: List[int] = []
+        self.TP_RANKS: List[int] = []
+
+
+PROCESS_GROUP = ProcessGroupSingleton()
+
+
+def get_cfg_group():
+    return PROCESS_GROUP.CFG_GROUP
+
+
+def get_cfg_world_size():
+    return PROCESS_GROUP.CFG_GROUP.size()
+
+
+def get_cfg_rank():
+    return PROCESS_GROUP.CFG_GROUP.rank()
+
+
+def get_cfg_ranks():
+    return PROCESS_GROUP.CFG_RANKS
+
+
+def get_sp_group():
+    return PROCESS_GROUP.SP_GROUP
+
+
+def get_sp_world_size():
+    return PROCESS_GROUP.SP_GROUP.size()
+
+
+def get_sp_rank():
+    return PROCESS_GROUP.SP_GROUP.rank()
+
+
+def get_sp_ranks():
+    return PROCESS_GROUP.SP_RANKS
+
+
+def get_tp_group():
+    return PROCESS_GROUP.TP_GROUP
+
+
+def get_tp_world_size():
+    return PROCESS_GROUP.TP_GROUP.size()
+
+
+def get_tp_rank():
+    return PROCESS_GROUP.TP_GROUP.rank()
+
+
+def get_tp_ranks():
+    return PROCESS_GROUP.TP_RANKS
+
+
+def init_parallel_pgs(
+    cfg_degree: int = 1,
+    sp_ulysses_degree: int = 1,
+    sp_ring_degree: int = 1,
+    tp_degree: int = 1,
+    rank: int = 0,
+    world_size: int = 1,
+):
+    sp_degree = sp_ulysses_degree * sp_ring_degree
+
+    assert sp_degree == 1 or tp_degree == 1, "sequence parallel and tensor parallel does not work together"
+    assert world_size == cfg_degree * sp_degree * tp_degree, (
+        f"world_size ({world_size}) must be equal to cfg_degree ({cfg_degree}) * sp_degree ({sp_degree}) * tp_degree ({tp_degree})"
+    )
+
+    def make_parallel_groups(blocks: List[List[int]], degree: int):
+        groups, chunks = [], []
+        for block in blocks:
+            size = len(block) // degree
+            chunk = [block[i * size : (i + 1) * size] for i in range(degree)]
+            chunks.extend(chunk)
+            groups.extend(list(zip(*chunk)))
+        return groups, chunks
+
+    blocks = [list(range(world_size))]
+    cfg_groups, cfg_blocks = make_parallel_groups(blocks, cfg_degree)
+    for cfg_ranks in cfg_groups:
+        cfg_group = dist.new_group(cfg_ranks)
+        if rank in cfg_ranks:
+            PROCESS_GROUP.CFG_GROUP = cfg_group
+            PROCESS_GROUP.CFG_RANKS = cfg_ranks
+
+    sp_groups, sp_blocks = make_parallel_groups(cfg_blocks, sp_degree)
+    for sp_ranks in sp_groups:
+        group = dist.new_group(sp_ranks)
+        if rank in sp_ranks:
+            PROCESS_GROUP.SP_GROUP = group
+            PROCESS_GROUP.SP_RANKS = sp_ranks
+
+    tp_groups, _ = make_parallel_groups(sp_blocks, tp_degree)
+    for tp_ranks in tp_groups:
+        group = dist.new_group(tp_ranks)
+        if rank in tp_ranks:
+            PROCESS_GROUP.TP_GROUP = group
+            PROCESS_GROUP.TP_RANKS = tp_ranks
+
+    set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size)
+
+
+def clone(data):
     if isinstance(data, dict):
-        return {k: wait_tensor(v) for k, v in data.items()}
+        return {k: clone(v) for k, v in data.items()}
     if isinstance(data, tuple) or isinstance(data, list):
-        return [wait_tensor(t) for t in data]
-    if hasattr(data, "wait"):
-        return data.wait()
-    else:
-        return data
-
-
-def clone_tensor(data):
-    if isinstance(data, dict):
-        return {k: clone_tensor(v) for k, v in data.items()}
-    if isinstance(data, tuple) or isinstance(data, list):
-        return [clone_tensor(t) for t in data]
+        return [clone(t) for t in data]
     elif isinstance(data, torch.Tensor):
         return data.clone()
     else:
-        return data
+        return copy.deepcopy(data)
 
 
 def to_device(data, device):
@@ -47,48 +153,79 @@ def to_device(data, device):
         return data
 
 
-def split_and_get(data, num, index):
+def split_and_get(data, num, dim, index):
     if isinstance(data, dict):
-        return {k: split_and_get(v, num, index) for k, v in data.items()}
+        return {k: split_and_get(v, num, dim, index) for k, v in data.items()}
     if isinstance(data, tuple) or isinstance(data, list):
-        return [split_and_get(t, num, index) for t in data]
+        return [split_and_get(t, num, dim, index) for t in data]
     if isinstance(data, torch.Tensor):
-        if data.shape[0] < num:
-            raise ValueError("data.shape[0] < num, batch split failed")
-        return torch.split(data, data.shape[0] // num, dim=0)[index]
+        if data.shape[dim] < num:
+            raise ValueError(f"data.shape[{dim}] ({data.shape[dim]}) < num ({num}), split failed")
+        return torch.split(data, data.shape[dim] // num, dim)[index]
     return data
+
+
+def shard_model(
+    module: nn.Module,
+    device_id: int,
+    sharding_strategy: ShardingStrategy = ShardingStrategy.FULL_SHARD,
+    wrap_module_names: Optional[List[str]] = None,
+):
+    wrap_module_names = wrap_module_names or []
+
+    def wrap_fn(m):
+        for name in wrap_module_names:
+            submodule = getattr(module, name)
+            if isinstance(submodule, nn.ModuleList) and m in submodule:
+                return True
+            elif not isinstance(submodule, nn.ModuleList) and m is submodule:
+                return True
+        return False
+
+    return FSDP(
+        module,
+        device_id=device_id,
+        sharding_strategy=sharding_strategy,
+        auto_wrap_policy=partial(lambda_auto_wrap_policy, lambda_fn=wrap_fn),
+    )
 
 
 def parallelize_module(
     module: nn.Module,
-    device_mesh: Optional[DeviceMesh] = None,
+    device_mesh: DeviceMesh,
     parallelize_plan: Optional[Union[ParallelStyle, Dict[str, ParallelStyle]]] = None,
 ):
     _validate_tp_mesh_dim(device_mesh)
     if parallelize_plan is None:
         return module
+    if isinstance(parallelize_plan, ParallelStyle):
+        return parallelize_plan._apply(module, device_mesh)
     for module_path, parallelize_style in parallelize_plan.items():
-        path_splits = module_path.split(".")
-        if len(path_splits) == 0:
+        if module_path.strip() == "":
             raise ValueError("Expect module path to be non-empty, but got empty string!")
-        current = module
         try:
-            for atom in path_splits:
-                current = getattr(current, atom)
-            parallelize_style._apply(current, device_mesh)
+            submodule = module.get_submodule(module_path)
+            parallelize_style._apply(submodule, device_mesh)
         except AttributeError:
             continue
     return module
 
 
+NCCL_TIMEOUT_SEC = int(os.environ.get("NCCL_TIMEOUT_SEC", 600))
+PARALLEL_FWD_TIMEOUT_SEC = int(os.environ.get("PARALLEL_FWD_TIMEOUT_SEC", 300))
+
+
 def _worker_loop(
     rank: int,
     world_size: int,
-    conn,
-    model: nn.Module,
-    tp_plan: dict,
-    tensor_parallelism: int,
-    batch_parallelism: int,
+    queue_in: mp.Queue,
+    queue_out: mp.Queue,
+    module: nn.Module,
+    cfg_degree: int,
+    sp_ulysses_degree: int,
+    sp_ring_degree: int,
+    tp_degree: int,
+    shard_fn: Optional[Callable] = None,
     master_port: int = 29500,
     device: str = "cuda",
 ):
@@ -101,74 +238,95 @@ def _worker_loop(
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(master_port)
         torch.cuda.set_device(rank)
-        dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
-        mesh_2d = init_device_mesh(
-            device, (batch_parallelism, tensor_parallelism), mesh_dim_names=("batch_parallel", "tensor_parallel")
+
+        timeout = timedelta(seconds=NCCL_TIMEOUT_SEC)
+        dist.init_process_group(
+            backend="nccl",
+            init_method="env://",
+            timeout=timeout,
+            world_size=world_size,
+            rank=rank,
         )
-        mesh_bp = mesh_2d["batch_parallel"]
-        mesh_tp = mesh_2d["tensor_parallel"]
-        sharded_model = parallelize_module(model, mesh_tp, tp_plan)
-        sharded_model.cuda()
+        init_parallel_pgs(
+            cfg_degree=cfg_degree,
+            sp_ulysses_degree=sp_ulysses_degree,
+            sp_ring_degree=sp_ring_degree,
+            tp_degree=tp_degree,
+            rank=rank,
+            world_size=world_size,
+        )
+
+        if tp_degree > 1:
+            module = parallelize_module(
+                module=module,
+                device_mesh=DeviceMesh(device, torch.tensor(get_tp_ranks())),
+                parallelize_plan=module.get_tp_plan(),
+            ).to(device)
+        elif shard_fn:
+            module = shard_fn(module=module, device_id=rank)
+        else:
+            module = module.to(device)
+
         while True:
-            if mesh_2d.get_rank() == 0:
-                kwargs = conn.recv()
+            if rank == 0:
+                kwargs = queue_in.get()
                 data = [kwargs]
             else:
                 data = [None]
             dist.broadcast_object_list(data, src=0)
-            kwargs = to_device(copy.deepcopy(data[0]), device)
+            kwargs = to_device(clone(data[0]), device)
+            kwargs = split_and_get(kwargs, get_cfg_world_size(), 0, get_cfg_rank())
             del data
-            if kwargs == "TERMINATE":
-                break
-            kwargs = split_and_get(kwargs, mesh_bp.size(), mesh_bp.get_local_rank())
             with torch.no_grad():
-                result = sharded_model(**kwargs)
-                result = wait_tensor(result)  # 虽然这里可以扩展，但我们默认这里的result为单个tensor
-            if mesh_tp.get_local_rank() == 0:
-                final_result = torch.zeros(
-                    (mesh_bp.size(), *result.shape[1:]), dtype=result.dtype, device=result.device
-                )
-                dist.all_gather_into_tensor(final_result, result, group=mesh_bp.get_group())  # 是否是保顺序的
-                result = final_result
-            if mesh_2d.get_rank() == 0:
-                conn.send(final_result)
+                y = module(**kwargs)
+            if get_sp_rank() == 0:
+                gathered = torch.zeros((get_cfg_world_size(), *y.shape[1:]), dtype=y.dtype, device=y.device)
+                dist.all_gather_into_tensor(gathered, y, group=get_cfg_group())
+                y = gathered
+            if rank == 0:
+                queue_out.put(y)
             dist.barrier()
     except Exception as e:
-        # 打印traceback
         import traceback
 
         traceback.print_exc()
         logger.error(f"Error in worker loop (rank {rank}): {e}")
     finally:
-        del sharded_model
-        conn.close()
+        del module
         torch.cuda.synchronize()
+        torch.cuda.empty_cache()
         dist.destroy_process_group()
 
 
-class ParallelModel(torch.nn.Module):
+class ParallelModel(nn.Module):
     def __init__(
         self,
-        model: nn.Module,
-        tp_plan: dict,
-        tensor_parallelism: int = 4,
-        batch_parallelism: int = 2,
+        module: nn.Module,
+        cfg_degree: int,
+        sp_ulysses_degree: int,
+        sp_ring_degree: int,
+        tp_degree: int,
+        shard_fn: Optional[Callable] = None,
         master_port: int = 29500,
         device: str = "cuda",
     ):
         super().__init__()
-        self.world_size = tensor_parallelism * batch_parallelism
+        self.world_size = cfg_degree * sp_ulysses_degree * sp_ring_degree * tp_degree
         self.device = device
-        self.conn_main, conn_worker = mp.Pipe(duplex=True)
-        mp.spawn(
+        self.queue_in = mp.Queue()
+        self.queue_out = mp.Queue()
+        self.ctx = mp.spawn(
             _worker_loop,
             args=(
                 self.world_size,
-                conn_worker,
-                model,
-                tp_plan,
-                tensor_parallelism,
-                batch_parallelism,
+                self.queue_in,
+                self.queue_out,
+                module,
+                cfg_degree,
+                sp_ulysses_degree,
+                sp_ring_degree,
+                tp_degree,
+                shard_fn,
                 master_port,
                 device,
             ),
@@ -177,15 +335,17 @@ class ParallelModel(torch.nn.Module):
         )
 
     def forward(self, **kwargs):
-        self.conn_main.send(kwargs)
-        result = self.conn_main.recv()
-        return clone_tensor(result)
+        self.queue_in.put(kwargs)
+        res = self.queue_out.get(timeout=PARALLEL_FWD_TIMEOUT_SEC)
+        return res
 
     def __del__(self):
         # Send terminate signal to all workers
-        if hasattr(self, "conn_main"):
-            self.conn_main.send("TERMINATE")
-            self.conn_main.close()
+        for p in self.ctx.processes:
+            p.terminate()
+            p.join()
+        self.queue_in.close()
+        self.queue_out.close()
 
 
 __all__ = ["ParallelModel"]
