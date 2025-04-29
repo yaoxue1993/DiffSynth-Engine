@@ -21,9 +21,9 @@ else:
 
 XFORMERS_AVAILABLE = importlib.util.find_spec("xformers") is not None
 if XFORMERS_AVAILABLE:
-    logger.info("xFormers is available")
+    logger.info("XFormers is available")
 else:
-    logger.info("xFormers is not available")
+    logger.info("XFormers is not available")
 
 SDPA_AVAILABLE = hasattr(torch.nn.functional, "scaled_dot_product_attention")
 if SDPA_AVAILABLE:

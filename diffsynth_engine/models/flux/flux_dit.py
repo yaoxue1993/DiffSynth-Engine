@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+import numpy as np
 from typing import Dict, Optional
 from einops import rearrange
 
@@ -18,6 +19,16 @@ logger = logging.get_logger(__name__)
 
 with open(FLUX_DIT_CONFIG_FILE, "r") as f:
     config = json.load(f)
+
+
+
+def default_patch_callback(hidden_states, controlnet_outputs, index, patch_point: FluxPatchPoint):
+    for controlnet_output in controlnet_outputs:
+        if len(controlnet_output) <= index:
+            continue
+        #  主模型第i层输出的hidden_states和每个controlnet第i层的输出结果相加
+        hidden_states = hidden_states + controlnet_output[index]
+    return hidden_states
 
 
 class FluxDiTStateDictConverter(StateDictConverter):
@@ -327,7 +338,6 @@ class FluxDiT(PreTrainedModel):
 
     def __init__(
         self,
-        disable_guidance_embedder=False,
         attn_impl: Optional[str] = None,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
@@ -335,9 +345,7 @@ class FluxDiT(PreTrainedModel):
         super().__init__()
         self.pos_embedder = RoPEEmbedding(3072, 10000, [16, 56, 56])
         self.time_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        self.guidance_embedder = (
-            None if disable_guidance_embedder else TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
-        )
+        self.guidance_embedder = TimestepEmbeddings(256, 3072, device=device, dtype=dtype)
         self.pooled_text_embedder = nn.Sequential(
             nn.Linear(768, 3072, device=device, dtype=dtype),
             nn.SiLU(),
@@ -392,6 +400,8 @@ class FluxDiT(PreTrainedModel):
         text_ids,
         image_ids=None,
         use_gradient_checkpointing=False,
+        controlnet_double_block_output=None,
+        controlnet_single_block_output=None,
         **kwargs,
     ):
         fp8_linear_enabled = getattr(self, "fp8_linear_enabled", False)
@@ -413,16 +423,10 @@ class FluxDiT(PreTrainedModel):
             hidden_states = self.patchify(hidden_states)
             hidden_states = self.x_embedder(hidden_states)
 
-            def create_custom_forward(module):
-                def custom_forward(*inputs):
-                    return module(*inputs)
-
-                return custom_forward
-
-            for block in self.blocks:
+            for i, block in enumerate(self.blocks):
                 if self.training and use_gradient_checkpointing:
                     hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
+                        block,
                         hidden_states,
                         prompt_emb,
                         conditioning,
@@ -431,12 +435,16 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
+                if controlnet_double_block_output is not None:
+                    interval_control = len(self.blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_double_block_output[i // interval_control]
 
             hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
             for block in self.single_blocks:
                 if self.training and use_gradient_checkpointing:
                     hidden_states, prompt_emb = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
+                        block,
                         hidden_states,
                         prompt_emb,
                         conditioning,
@@ -445,12 +453,15 @@ class FluxDiT(PreTrainedModel):
                     )
                 else:
                     hidden_states, prompt_emb = block(hidden_states, prompt_emb, conditioning, image_rotary_emb)
-            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
+                if controlnet_single_block_output is not None:
+                    interval_control = len(self.single_blocks) / len(controlnet_double_block_output)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states = hidden_states + controlnet_single_block_output[i // interval_control]
 
+            hidden_states = hidden_states[:, prompt_emb.shape[1] :]
             hidden_states = self.final_norm_out(hidden_states, conditioning)
             hidden_states = self.final_proj_out(hidden_states)
             hidden_states = self.unpatchify(hidden_states, height, width)
-
             return hidden_states
 
     @classmethod
@@ -459,7 +470,6 @@ class FluxDiT(PreTrainedModel):
         state_dict: Dict[str, torch.Tensor],
         device: str,
         dtype: torch.dtype,
-        disable_guidance_embedder: bool = False,
         attn_impl: Optional[str] = None,
     ):
         with no_init_weights():
@@ -467,7 +477,6 @@ class FluxDiT(PreTrainedModel):
                 cls,
                 device=device,
                 dtype=dtype,
-                disable_guidance_embedder=disable_guidance_embedder,
                 attn_impl=attn_impl,
             )
             model = model.requires_grad_(False)  # for loading gguf

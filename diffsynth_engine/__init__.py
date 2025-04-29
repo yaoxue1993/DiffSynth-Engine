@@ -7,12 +7,15 @@ from .pipelines import (
     SDXLModelConfig,
     SDModelConfig,
     WanModelConfig,
+    ControlNetParams,
 )
+from .models.flux import FluxControlNet
 from .utils.download import fetch_model, fetch_modelscope_model, fetch_civitai_model
 from .utils.video import load_video, save_video
 
 __all__ = [
     "FluxImagePipeline",
+    "FluxControlNet",
     "SDXLImagePipeline",
     "SDImagePipeline",
     "WanVideoPipeline",
@@ -20,6 +23,7 @@ __all__ = [
     "SDXLModelConfig",
     "SDModelConfig",
     "WanModelConfig",
+    "ControlNetParams",
     "fetch_model",
     "fetch_modelscope_model",
     "fetch_civitai_model",

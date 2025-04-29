@@ -1,8 +1,10 @@
 import re
 import os
 import torch
+import torch.nn as nn
 import math
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Tuple, Optional
+from diffsynth_engine.utils.loader import load_file
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -174,6 +176,24 @@ def calculate_shift(
     return mu
 
 
+def accumulate(result, new_item):
+    if result is None:
+        return new_item
+    for i, item in enumerate(new_item):
+        result[i] += item
+    return result
+
+
+@dataclass
+class ControlNetParams:
+    model: nn.Module
+    scale: float
+    image: List[Image.Image | torch.Tensor]
+    mask: Optional[List[Image.Image | torch.Tensor]] = None
+    control_start: float = 0
+    control_end: float = 1
+
+
 @dataclass
 class FluxModelConfig:
     dit_path: str | os.PathLike
@@ -202,7 +222,7 @@ class FluxImagePipeline(BasePipeline):
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
         use_cfg: bool = False,
-        batch_cfg: bool = True,
+        batch_cfg: bool = False,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -339,20 +359,50 @@ class FluxImagePipeline(BasePipeline):
         text_ids: torch.Tensor,
         cfg_scale: float,
         guidance: torch.Tensor,
-        use_cfg: bool = True,
-        batch_cfg: bool = True,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
+        use_cfg: bool = False,
+        batch_cfg: bool = False,
     ):
         if cfg_scale <= 1.0 or not use_cfg:
             return self.predict_noise(
-                latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance
+                latents,
+                timestep,
+                positive_prompt_emb,
+                positive_add_text_embeds,
+                image_ids,
+                text_ids,
+                guidance,
+                controlnet_params,
+                current_step,
+                total_step,
             )
         if not batch_cfg:
             # cfg by predict noise one by one
             positive_noise_pred = self.predict_noise(
-                latents, timestep, positive_prompt_emb, positive_add_text_embeds, image_ids, text_ids, guidance
+                latents,
+                timestep,
+                positive_prompt_emb,
+                positive_add_text_embeds,
+                image_ids,
+                text_ids,
+                guidance,
+                controlnet_params,
+                current_step,
+                total_step,
             )
             negative_noise_pred = self.predict_noise(
-                latents, timestep, negative_prompt_emb, negative_add_text_embeds, image_ids, text_ids, guidance
+                latents,
+                timestep,
+                negative_prompt_emb,
+                negative_add_text_embeds,
+                image_ids,
+                text_ids,
+                guidance,
+                controlnet_params,
+                current_step,
+                total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -363,7 +413,16 @@ class FluxImagePipeline(BasePipeline):
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
-                latents, timestep, prompt_emb, add_text_embeds, image_ids, text_ids, guidance
+                latents,
+                timestep,
+                prompt_emb,
+                add_text_embeds,
+                image_ids,
+                text_ids,
+                guidance,
+                controlnet_params,
+                current_step,
+                total_step,
             )
             noise_pred = negative_noise_pred + cfg_scale * (positive_noise_pred - negative_noise_pred)
             return noise_pred
@@ -377,7 +436,22 @@ class FluxImagePipeline(BasePipeline):
         image_ids: torch.Tensor,
         text_ids: torch.Tensor,
         guidance: float,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
     ):
+        double_block_output, single_block_output = self.predict_multicontrolnet(
+            latents=latents,
+            timestep=timestep,
+            prompt_emb=prompt_emb,
+            add_text_embeds=add_text_embeds,
+            guidance=guidance,
+            text_ids=text_ids,
+            image_ids=image_ids,
+            controlnet_params=controlnet_params,
+            current_step=current_step,
+            total_step=total_step,
+        )
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -386,6 +460,8 @@ class FluxImagePipeline(BasePipeline):
             guidance=guidance,
             text_ids=text_ids,
             image_ids=image_ids,
+            controlnet_double_block_output=double_block_output,
+            controlnet_single_block_output=single_block_output,
         )
         return noise_pred
 
@@ -424,6 +500,74 @@ class FluxImagePipeline(BasePipeline):
         sigmas, timesteps = sigmas.to(device=self.device), timesteps.to(self.device)
         return init_latents, latents, sigmas, timesteps
 
+    def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
+        if mask is None:
+            image = image.resize((width, height))
+            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+            latent = self.encode_image(image, tiled=False)
+        else:
+            image = image.resize((width, height))
+            mask = mask.resize((width, height))
+            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+            mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
+            masked_image = image.clone()
+            masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
+            latent = self.encode_image(masked_image, tiled=False)
+            mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
+            mask = 1 - mask
+            latent = torch.cat([latent, mask], dim=1)
+        return latent
+
+    def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
+        results = []
+        for param in controlnet_params:
+            condition = self.prepare_masked_latent(param.image, param.mask, h, w)
+            results.append(
+                ControlNetParams(
+                    model=param.model,
+                    scale=param.scale,
+                    image=condition,
+                )
+            )
+        return results
+
+    def predict_multicontrolnet(
+        self,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        prompt_emb: torch.Tensor,
+        add_text_embeds: torch.Tensor,
+        image_ids: torch.Tensor,
+        text_ids: torch.Tensor,
+        guidance: float,
+        controlnet_params: List[ControlNetParams],
+        current_step: int,
+        total_step: int,
+    ):
+        double_block_output_results, single_block_output_results = None, None
+        for param in controlnet_params:
+            current_scale = param.scale
+            if not (
+                current_step >= param.control_start * total_step and current_step <= param.control_end * total_step
+            ):
+                # if current_step is not in the control range
+                # skip thie controlnet
+                continue
+            double_block_output, single_block_output = param.model(
+                latents,
+                param.image,
+                current_scale,
+                timestep,
+                prompt_emb,
+                add_text_embeds,
+                guidance,
+                image_ids,
+                text_ids,
+            )
+            double_block_output_results = accumulate(double_block_output_results, double_block_output)
+            single_block_output_results = accumulate(single_block_output_results, single_block_output)
+        return double_block_output_results, single_block_output_results
+
     def enable_fp8_linear(self):
         enable_fp8_linear(self.dit)
 
@@ -435,7 +579,6 @@ class FluxImagePipeline(BasePipeline):
         cfg_scale: float = 1.0,
         clip_skip: int = 2,
         input_image: Image.Image | None = None,
-        mask_image: Image.Image | None = None,
         denoising_strength: float = 1.0,
         height: int = 1024,
         width: int = 1024,
@@ -444,25 +587,26 @@ class FluxImagePipeline(BasePipeline):
         tile_size: int = 128,
         tile_stride: int = 64,
         seed: int | None = None,
+        controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         if input_image is not None:
             width, height = input_image.size
+        if not isinstance(controlnet_params, list):
+            controlnet_params = [controlnet_params]
         self.validate_image_size(height, width, minimum=64, multiple_of=16)
+
         noise = self.generate_noise((1, 16, height // 8, width // 8), seed=seed, device="cpu", dtype=self.dtype).to(
             device=self.device
         )
-
+        # dynamic shift
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len)
         init_latents, latents, sigmas, timesteps = self.prepare_latents(
             noise, input_image, denoising_strength, num_inference_steps, mu, tiled, tile_size, tile_stride
         )
-        mask, overlay_image = None, None
-        if mask_image is not None:
-            mask, overlay_image = self.prepare_mask(input_image, mask_image, vae_scale_factor=8, latent_channels=16)
         # Initialize sampler
-        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas, mask=mask)
+        self.sampler.initialize(init_latents=init_latents, timesteps=timesteps, sigmas=sigmas)
 
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
@@ -471,6 +615,9 @@ class FluxImagePipeline(BasePipeline):
 
         # Extra input
         image_ids, text_ids, guidance = self.prepare_extra_input(latents, positive_prompt_emb, guidance=3.5)
+
+        # ControlNet
+        controlnet_params = self.prepare_controlnet_params(controlnet_params, h=height, w=width)
 
         # Denoise
         self.load_models_to_device(["dit"])
@@ -487,14 +634,14 @@ class FluxImagePipeline(BasePipeline):
                 text_ids=text_ids,
                 cfg_scale=cfg_scale,
                 guidance=guidance,
+                controlnet_params=controlnet_params,
+                current_step=i,
+                total_step=len(timesteps),
                 use_cfg=self.use_cfg,
                 batch_cfg=self.batch_cfg,
             )
             # Denoise
             latents = self.sampler.step(latents, noise_pred, i)
-            if mask_image is not None:
-                sample = sigmas[i] * noise + (1.0 - sigmas[i]) * init_latents
-                latents = latents * mask + sample * (1 - mask)
             # UI
             if progress_callback is not None:
                 progress_callback(i, len(timesteps), "DENOISING")
@@ -502,11 +649,6 @@ class FluxImagePipeline(BasePipeline):
         self.load_models_to_device(["vae_decoder"])
         vae_output = self.decode_image(latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
         image = self.vae_output_to_image(vae_output)
-        # Paste Overlay Image
-        if mask_image is not None:
-            image = image.convert("RGBA")
-            image.alpha_composite(overlay_image)
-            image = image.convert("RGB")
         # Offload all models
         self.load_models_to_device([])
         return image
