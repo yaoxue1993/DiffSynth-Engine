@@ -14,11 +14,11 @@ except ImportError:
     use_fast_safetensors = False
 
 
-def load_file(path: str, device: str = "cpu"):
+def load_file(path: str | os.PathLike, device: str = "cpu"):
     if use_fast_safetensors:
         logger.info(f"FastSafetensors load model from {path}")
         start_time = time.time()
-        result = load_safetensors(path, num_threads=os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
+        result = load_safetensors(str(path), num_threads=os.environ.get("FAST_SAFETENSORS_NUM_THREADS", 16))
         logger.info(f"FastSafetensors Load Model End. Time: {time.time() - start_time:.2f}s")
         return result
     else:
