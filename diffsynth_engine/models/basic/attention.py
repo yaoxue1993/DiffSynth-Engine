@@ -37,6 +37,7 @@ if XFORMERS_AVAILABLE:
             attn_mask = memory_align(attn_mask.contiguous())
         return memory_efficient_attention(q, k, v, attn_bias=attn_mask, scale=scale)
 
+
 if SDPA_AVAILABLE:
 
     def sdpa_attn(q, k, v, attn_mask=None, scale=None):
@@ -110,12 +111,12 @@ def attention(
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
             return flash_attn3(q, k, v, softmax_scale=scale)
-        elif FLASH_ATTN_2_AVAILABLE:
-            return flash_attn2(q, k, v, softmax_scale=scale)
         elif XFORMERS_AVAILABLE:
             return xformers_attn(q, k, v, attn_mask=attn_mask, scale=scale)
         elif SDPA_AVAILABLE:
             return sdpa_attn(q, k, v, attn_mask=attn_mask, scale=scale)
+        elif FLASH_ATTN_2_AVAILABLE:
+            return flash_attn2(q, k, v, softmax_scale=scale)
         else:
             return eager_attn(q, k, v, attn_mask=attn_mask, scale=scale)
     else:
@@ -211,10 +212,10 @@ def long_context_attention(
     if attn_impl is None or attn_impl == "auto":
         if FLASH_ATTN_3_AVAILABLE:
             attn_func = LongContextAttention(attn_type=AttnType.FA3)
-        elif FLASH_ATTN_2_AVAILABLE:
-            attn_func = LongContextAttention(attn_type=AttnType.FA)
         elif SDPA_AVAILABLE:
             attn_func = LongContextAttention(attn_type=AttnType.TORCH)
+        elif FLASH_ATTN_2_AVAILABLE:
+            attn_func = LongContextAttention(attn_type=AttnType.FA)
         else:
             raise ValueError("No available long context attention implementation")
     else:

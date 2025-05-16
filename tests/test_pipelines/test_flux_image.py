@@ -23,7 +23,7 @@ class TestFLUXImage(ImageTestCase):
 
     def test_fused_lora(self):
         lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="v1.0", path="12.safetensors")
-        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True)
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=True, save_original_weight=True)
         image = self.pipe(
             prompt="1 girl, maria",
             width=1024,
@@ -36,7 +36,7 @@ class TestFLUXImage(ImageTestCase):
 
     def test_unfused_lora(self):
         lora_model_path = fetch_model("MAILAND/Merjic-Maria", revision="v1.0", path="12.safetensors")
-        self.pipe.load_loras([(lora_model_path, 0.8)])
+        self.pipe.load_loras([(lora_model_path, 0.8)], fused=False)
         image = self.pipe(
             prompt="1 girl, maria",
             width=1024,
@@ -68,6 +68,7 @@ class TestFLUXGGUF(ImageTestCase):
             seed=42,
         )
         self.assertImageEqualAndSaveFailed(image, "flux/flux_txt2img.png", threshold=0.85)
+
 
 if __name__ == "__main__":
     unittest.main()
