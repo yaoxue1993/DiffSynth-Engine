@@ -1,3 +1,4 @@
+from enum import Enum
 import re
 import os
 import torch
@@ -26,6 +27,8 @@ from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.platform import empty_cache
+
+from einops import rearrange
 
 logger = logging.get_logger(__name__)
 
@@ -244,11 +247,25 @@ def accumulate(result, new_item):
 ImageType = Union[Image.Image, torch.Tensor, List[Image.Image], List[torch.Tensor]]
 
 
+class ControlType(Enum):
+    normal = "normal"
+    bfl_control = "bfl_control"
+    bfl_fill = "bfl_fill"
+
+    def get_in_channel(self):
+        if self == ControlType.normal:
+            return 64
+        elif self == ControlType.bfl_control:
+            return 128
+        elif self == ControlType.bfl_fill:
+            return 384
+
+
 @dataclass
 class ControlNetParams:
-    model: nn.Module
     scale: float
     image: ImageType
+    model: Optional[nn.Module] = None
     mask: Optional[ImageType] = None
     control_start: float = 0
     control_end: float = 1
@@ -287,6 +304,7 @@ class FluxImagePipeline(BasePipeline):
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
         vae_tile_stride: int = 256,
+        control_type: ControlType = ControlType.normal,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -312,6 +330,7 @@ class FluxImagePipeline(BasePipeline):
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
         self.redux = None
+        self.control_type = control_type
         self.model_names = [
             "text_encoder_1",
             "text_encoder_2",
@@ -324,6 +343,7 @@ class FluxImagePipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | FluxModelConfig,
+        control_type: ControlType = ControlType.normal,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
@@ -364,7 +384,11 @@ class FluxImagePipeline(BasePipeline):
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
         with LoRAContext():
             dit = FluxDiT.from_state_dict(
-                dit_state_dict, device=init_device, dtype=model_config.dit_dtype, attn_impl=model_config.dit_attn_impl
+                dit_state_dict,
+                device=init_device,
+                dtype=model_config.dit_dtype,
+                in_channel=control_type.get_in_channel(),
+                attn_impl=model_config.dit_attn_impl,
             )
             if load_text_encoder:
                 text_encoder_1 = FluxTextEncoder1.from_state_dict(
@@ -386,6 +410,7 @@ class FluxImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             load_text_encoder=load_text_encoder,
+            control_type=control_type,
             device=device,
             dtype=dtype,
         )
@@ -535,6 +560,12 @@ class FluxImagePipeline(BasePipeline):
         current_step: int,
         total_step: int,
     ):
+        if self.control_type != ControlType.normal:
+            controlnet_param = controlnet_params[0]
+            latents = torch.cat((latents, controlnet_param.image * controlnet_param.scale), dim=1)
+            latents = latents.to(self.dtype)
+            controlnet_params = []
+
         double_block_output, single_block_output = self.predict_multicontrolnet(
             latents=latents,
             timestep=timestep,
@@ -547,7 +578,9 @@ class FluxImagePipeline(BasePipeline):
             current_step=current_step,
             total_step=total_step,
         )
+        
         self.load_models_to_device(["dit"])
+        
         noise_pred = self.dit(
             hidden_states=latents,
             timestep=timestep,
@@ -600,16 +633,28 @@ class FluxImagePipeline(BasePipeline):
             image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
             latent = self.encode_image(image)
         else:
-            image = image.resize((width, height))
-            mask = mask.resize((width, height))
-            image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
-            mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
-            masked_image = image.clone()
-            masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
-            latent = self.encode_image(masked_image)
-            mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
-            mask = 1 - mask
-            latent = torch.cat([latent, mask], dim=1)
+            if self.control_type == ControlType.normal:
+                image = image.resize((width, height))
+                mask = mask.resize((width, height))
+                image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+                mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
+                masked_image = image.clone()
+                masked_image[(mask > 0.5).repeat(1, 3, 1, 1)] = -1
+                latent = self.encode_image(masked_image)
+                mask = torch.nn.functional.interpolate(mask, size=(latent.shape[2], latent.shape[3]))
+                mask = 1 - mask
+                latent = torch.cat([latent, mask], dim=1)
+            elif self.control_type == ControlType.bfl_fill:
+                image = image.resize((width, height))
+                mask = mask.resize((width, height))
+                image = self.preprocess_image(image).to(device=self.device, dtype=self.dtype)
+                mask = self.preprocess_mask(mask).to(device=self.device, dtype=self.dtype)
+                image = image * (1 - mask)
+                image = self.encode_image(image)
+                mask = rearrange(mask, "b 1 (h ph) (w pw) -> b (ph pw) h w", ph=8, pw=8)
+                latent = torch.cat((image, mask), dim=1)
+            else:
+                raise ValueError(f"Unsupported mask latent prepare for controlnet type: {self.control_type}")
         return latent
 
     def prepare_controlnet_params(self, controlnet_params: List[ControlNetParams], h, w):
@@ -706,6 +751,9 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if self.control_type != ControlType.normal:
+            assert controlnet_params and len(controlnet_params) == 1, "bfl_controlnet must have one controlnet"
+
         if input_image is not None:
             width, height = input_image.size
         if not isinstance(controlnet_params, list):
