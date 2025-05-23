@@ -2,12 +2,11 @@ import math
 import json
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 from typing import Tuple, Optional
 from einops import rearrange
 
 from diffsynth_engine.models.base import StateDictConverter, PreTrainedModel
-from diffsynth_engine.models.basic.attention import attention, long_context_attention
+from diffsynth_engine.models.basic import attention as attention_ops
 from diffsynth_engine.models.basic.transformer_helper import RMSNorm
 from diffsynth_engine.models.utils import no_init_weights
 from diffsynth_engine.utils.constants import (
@@ -17,11 +16,7 @@ from diffsynth_engine.utils.constants import (
     WAN_DIT_14B_FLF2V_CONFIG_FILE,
 )
 from diffsynth_engine.utils.gguf import gguf_inference
-from diffsynth_engine.utils.parallel import (
-    get_sp_group,
-    get_sp_world_size,
-    get_sp_rank,
-)
+from diffsynth_engine.utils.parallel import sequence_parallel, sequence_parallel_unshard
 
 T5_TOKEN_NUM = 512
 FLF_TOKEN_NUM = 257 * 2
@@ -90,20 +85,12 @@ class SelfAttention(nn.Module):
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
-        if getattr(self, "use_usp", False):
-            x = long_context_attention(
-                q=rope_apply(q, freqs),
-                k=rope_apply(k, freqs),
-                v=v,
-                attn_impl=self.attn_impl,
-            )
-        else:
-            x = attention(
-                q=rope_apply(q, freqs),
-                k=rope_apply(k, freqs),
-                v=v,
-                attn_impl=self.attn_impl,
-            )
+        x = attention_ops.attention(
+            q=rope_apply(q, freqs),
+            k=rope_apply(k, freqs),
+            v=v,
+            attn_impl=self.attn_impl,
+        )
         x = x.flatten(2)
         return self.o(x)
 
@@ -148,12 +135,12 @@ class CrossAttention(nn.Module):
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
 
-        x = attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
+        x = attention_ops.attention(q, k, v, attn_impl=self.attn_impl).flatten(2)
         if self.has_image_input:
             k_img, v_img = self.norm_k_img(self.k_img(img)), self.v_img(img)
             k_img = rearrange(k_img, "b s (n d) -> b s n d", n=num_heads)
             v_img = rearrange(v_img, "b s (n d) -> b s n d", n=num_heads)
-            y = attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
+            y = attention_ops.attention(q, k_img, v_img, attn_impl=self.attn_impl).flatten(2)
             x = x + y
         return self.o(x)
 
@@ -316,10 +303,7 @@ class WanDiT(PreTrainedModel):
         if has_image_input:
             self.img_emb = MLP(1280, dim, flf_pos_emb, device=device, dtype=dtype)  # clip_feature_dim = 1280
 
-        if use_usp:
-            setattr(self, "use_usp", True)
-            for block in self.blocks:
-                setattr(block.self_attn, "use_usp", True)
+        self.use_usp = use_usp
 
     def patchify(self, x: torch.Tensor):
         x = self.patch_embedding(x)  # b c f h w -> b 4c f h/2 w/2
@@ -368,21 +352,12 @@ class WanDiT(PreTrainedModel):
                 .reshape(f * h * w, 1, -1)
                 .to(x.device)
             )
-            if getattr(self, "use_usp", False):
-                s, p = x.size(1), get_sp_world_size()  # (sequence_length, parallelism)
-                split_size = [s // p + 1 if i < s % p else s // p for i in range(p)]
-                x = torch.split(x, split_size, dim=1)[get_sp_rank()]
-                freqs = torch.split(freqs, split_size, dim=0)[get_sp_rank()]
 
-            for block in self.blocks:
-                x = block(x, context, t_mod, freqs)
-            x = self.head(x, t)
-
-            if getattr(self, "use_usp", False):
-                b, d = x.size(0), x.size(2)  # (batch_size, out_dim)
-                xs = [torch.zeros((b, s, d), dtype=x.dtype, device=x.device) for s in split_size]
-                dist.all_gather(xs, x, group=get_sp_group())
-                x = torch.concat(xs, dim=1)
+            with sequence_parallel([x, freqs], seq_dims=(1, 0), enabled=self.use_usp):
+                for block in self.blocks:
+                    x = block(x, context, t_mod, freqs)
+                x = self.head(x, t)
+                (x,) = sequence_parallel_unshard((x,), seq_dims=(1,), seq_lens=(f * h * w,))
             x = self.unpatchify(x, (f, h, w))
             return x
 

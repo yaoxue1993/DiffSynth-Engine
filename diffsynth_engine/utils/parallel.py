@@ -1,7 +1,9 @@
 import os
 import copy
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -10,12 +12,13 @@ from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor.parallel.style import ParallelStyle
 from torch.distributed.tensor.parallel._utils import _validate_tp_mesh_dim
+from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
 from typing import Callable, Dict, List, Union, Optional
 from queue import Empty
 
-
+import diffsynth_engine.models.basic.attention as attention_ops
 from diffsynth_engine.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -414,4 +417,63 @@ class ParallelModel(nn.Module):
         self.queue_out.close()
 
 
-__all__ = ["ParallelModel"]
+_sequence_parallel_enabled = False
+
+
+@contextmanager
+def sequence_parallel(
+    tensors: List[torch.Tensor] | None = None,
+    seq_dims: List[int] | None = None,
+    enabled: bool = False,
+):
+    if not enabled:
+        yield
+        return
+
+    tensors = [] if tensors is None else tensors
+    seq_dims = [] if seq_dims is None else seq_dims
+    assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
+
+    for tensor, seq_dim in zip(tensors, seq_dims):
+        # pad seq_len to multiple of sp_world_size
+        # TODO: long_context_attention does not support attn_mask, may cause loss of numerical precision with padding
+        seq_len = tensor.size(seq_dim)
+        pad_len = math.ceil(seq_len / get_sp_world_size()) * get_sp_world_size() - seq_len
+        padding = [0] * (2 * tensor.ndim)
+        padding[-2 * seq_dim - 1] = pad_len
+        padded_tensor = F.pad(tensor, padding)
+
+        chunks = torch.chunk(padded_tensor, get_sp_world_size(), dim=seq_dim)
+        chunk = chunks[get_sp_rank()]
+        tensor.resize_(chunk.shape)
+        tensor.copy_(chunk)
+
+    global _sequence_parallel_enabled
+    _sequence_parallel_enabled = True
+    origin_attention = attention_ops.attention
+    attention_ops.attention = attention_ops.long_context_attention
+    yield
+    _sequence_parallel_enabled = False
+    attention_ops.attention = origin_attention
+
+
+def sequence_parallel_unshard(
+    tensors: List[torch.Tensor],
+    seq_dims: List[int],
+    seq_lens: List[int],
+) -> List[torch.Tensor]:
+    if not _sequence_parallel_enabled:
+        return tensors
+
+    assert len(tensors) == len(seq_dims), "tensors and seq_dims must have the same number of elements"
+    assert len(tensors) == len(seq_lens), "tensors and seq_lens must have the same number of elements"
+    unshard_tensors = []
+    for tensor, seq_dim, seq_len in zip(tensors, seq_dims, seq_lens):
+        unshard = [torch.zeros_like(tensor) for _ in range(get_sp_world_size())]
+        dist.all_gather(unshard, tensor, group=get_sp_group())
+        unshard = torch.cat(unshard, dim=seq_dim).narrow(dim=seq_dim, start=0, length=seq_len)
+        unshard_tensors.append(unshard)
+    return unshard_tensors
+
+
+__all__ = ["ParallelModel", "sequence_parallel", "sequence_parallel_unshard"]
