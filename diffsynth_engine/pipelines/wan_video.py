@@ -159,7 +159,7 @@ class WanVideoPipeline(BasePipeline):
         self.vae = vae
         self.image_encoder = image_encoder
         self.batch_cfg = batch_cfg
-        self.model_names = ["text_encoder", "dit", "vae"]
+        self.model_names = ["text_encoder", "dit", "vae", "image_encoder"]
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None, (
@@ -417,8 +417,6 @@ class WanVideoPipeline(BasePipeline):
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
     ) -> "WanVideoPipeline":
-        cls.validate_offload_mode(offload_mode)
-
         if isinstance(model_path_or_config, str):
             model_config = WanModelConfig(model_path=model_path_or_config)
         else:
@@ -523,10 +521,8 @@ class WanVideoPipeline(BasePipeline):
             dtype=dtype,
         )
         pipe.eval()
-        if offload_mode == "cpu_offload":
-            pipe.enable_cpu_offload()
-        elif offload_mode == "sequential_cpu_offload":
-            pipe.enable_sequential_cpu_offload()
+        if offload_mode is not None:
+            pipe.enable_cpu_offload(offload_mode)
         return pipe
 
     def __del__(self):
