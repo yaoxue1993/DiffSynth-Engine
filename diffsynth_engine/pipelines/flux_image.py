@@ -308,7 +308,6 @@ class FluxImagePipeline(BasePipeline):
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
         load_text_encoder: bool = True,
-        use_cfg: bool = False,
         batch_cfg: bool = False,
         vae_tiled: bool = False,
         vae_tile_size: int = 256,
@@ -336,7 +335,6 @@ class FluxImagePipeline(BasePipeline):
         self.vae_decoder = vae_decoder
         self.vae_encoder = vae_encoder
         self.load_text_encoder = load_text_encoder
-        self.use_cfg = use_cfg
         self.batch_cfg = batch_cfg
         self.ip_adapter = None
         self.redux = None
@@ -353,11 +351,15 @@ class FluxImagePipeline(BasePipeline):
     def from_pretrained(
         cls,
         model_path_or_config: str | os.PathLike | FluxModelConfig,
+        load_text_encoder: bool = True,
+        batch_cfg: bool = False,
+        vae_tiled: bool = False,
+        vae_tile_size: int = 256,
+        vae_tile_stride: int = 256,
         control_type: ControlType = ControlType.normal,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: str | None = None,
-        load_text_encoder: bool = True,
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
     ) -> "FluxImagePipeline":
@@ -454,6 +456,10 @@ class FluxImagePipeline(BasePipeline):
             vae_decoder=vae_decoder,
             vae_encoder=vae_encoder,
             load_text_encoder=load_text_encoder,
+            batch_cfg=batch_cfg,
+            vae_tiled=vae_tiled,
+            vae_tile_size=vae_tile_size,
+            vae_tile_stride=vae_tile_stride,
             control_type=control_type,
             device=device,
             dtype=dtype,
@@ -530,10 +536,9 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams],
         current_step: int,
         total_step: int,
-        use_cfg: bool = False,
         batch_cfg: bool = False,
     ):
-        if cfg_scale <= 1.0 or not use_cfg:
+        if cfg_scale <= 1.0:
             return self.predict_noise(
                 latents,
                 timestep,
@@ -583,6 +588,10 @@ class FluxImagePipeline(BasePipeline):
             add_text_embeds = torch.cat([positive_add_text_embeds, negative_add_text_embeds], dim=0)
             latents = torch.cat([latents, latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
+            image_emb = torch.cat([image_emb, image_emb], dim=0) if image_emb is not None else None
+            image_ids = torch.cat([image_ids, image_ids], dim=0)
+            text_ids = torch.cat([text_ids, text_ids], dim=0)
+            guidance = torch.cat([guidance, guidance], dim=0)
             positive_noise_pred, negative_noise_pred = self.predict_noise(
                 latents,
                 timestep,
@@ -676,8 +685,14 @@ class FluxImagePipeline(BasePipeline):
                 num_inference_steps, mu=mu, sigma_min=1 / num_inference_steps, sigma_max=1.0
             )
             init_latents = latents.clone()
-        sigmas, timesteps = sigmas.to(device=self.device, dtype=self.dtype), timesteps.to(device=self.device, dtype=self.dtype)
-        init_latents, latents = init_latents.to(device=self.device, dtype=self.dtype), latents.to(device=self.device, dtype=self.dtype)
+        sigmas, timesteps = (
+            sigmas.to(device=self.device, dtype=self.dtype),
+            timesteps.to(device=self.device, dtype=self.dtype),
+        )
+        init_latents, latents = (
+            init_latents.to(device=self.device, dtype=self.dtype),
+            latents.to(device=self.device, dtype=self.dtype),
+        )
         return init_latents, latents, sigmas, timesteps
 
     def prepare_masked_latent(self, image: Image.Image, mask: Image.Image | None, height: int, width: int):
@@ -826,7 +841,7 @@ class FluxImagePipeline(BasePipeline):
         # Encode prompts
         self.load_models_to_device(["text_encoder_1", "text_encoder_2"])
         positive_prompt_emb, positive_add_text_embeds = self.encode_prompt(prompt, clip_skip=clip_skip)
-        if self.use_cfg and cfg_scale > 1:
+        if cfg_scale > 1:
             negative_prompt_emb, negative_add_text_embeds = self.encode_prompt(negative_prompt, clip_skip=clip_skip)
         else:
             negative_prompt_emb, negative_add_text_embeds = None, None
@@ -868,7 +883,6 @@ class FluxImagePipeline(BasePipeline):
                 controlnet_params=controlnet_params,
                 current_step=i,
                 total_step=len(timesteps),
-                use_cfg=self.use_cfg,
                 batch_cfg=self.batch_cfg,
             )
             # Denoise
