@@ -1,5 +1,5 @@
 from diffsynth_engine import fetch_model, FluxControlNet, ControlNetParams, FluxImagePipeline
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from PIL import Image
 import torch
 
@@ -34,6 +34,7 @@ class FluxInpaintingTool:
         inpainting_scale: float = 0.9,
         seed: int = 42,
         num_inference_steps: int = 20,
+        progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
         assert image.size == mask.size
         return self.pipe(
@@ -49,4 +50,5 @@ class FluxInpaintingTool:
                 mask=mask,
                 scale=inpainting_scale,
             ),
+            progress_callback=progress_callback,
         )
