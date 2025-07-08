@@ -108,5 +108,26 @@ class TestFLUXBFLFillImage(ImageTestCase):
         self.assertImageEqualAndSaveFailed(image, "flux/flux_bfl_fill.png", threshold=0.99)
 
 
+class TestFLUXBFLKontextImage(ImageTestCase):
+    @classmethod
+    def setUpClass(cls):
+        kontext_model_path = fetch_model(
+            "black-forest-labs/FLUX.1-Kontext-dev", revision="master", path="flux1-kontext-dev.safetensors"
+        )
+        cls.pipe = FluxImagePipeline.from_pretrained(kontext_model_path, control_type=ControlType.bfl_kontext).eval()
+    
+    def test_kontext_image(self):
+        image = self.pipe(
+            prompt="Make the wall color to red",
+            height=1024,
+            width=1024,
+            controlnet_params=ControlNetParams(image=self.get_input_image("flux_kontext_input.png")),
+            cfg_scale=1.0,
+            seed=42,
+            num_inference_steps=30,
+        )
+        self.assertImageEqualAndSaveFailed(image, "flux/flux_bfl_kontext.png", threshold=0.99)
+
+
 if __name__ == "__main__":
     unittest.main()
