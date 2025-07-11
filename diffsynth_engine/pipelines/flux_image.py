@@ -6,7 +6,7 @@ import torch.distributed as dist
 import math
 from einops import rearrange
 from enum import Enum
-from typing import Callable, Dict, List, Tuple, Optional
+from typing import Callable, Dict, List, Tuple, Optional, Union
 from tqdm import tqdm
 from PIL import Image
 from dataclasses import dataclass
@@ -16,6 +16,7 @@ from diffsynth_engine.models.flux import (
     FluxVAEDecoder,
     FluxVAEEncoder,
     FluxDiT,
+    FluxDiTFBCache,
     flux_dit_config,
     flux_text_encoder_config,
 )
@@ -429,6 +430,7 @@ class ControlType(Enum):
         elif self == ControlType.bfl_fill:
             return 384
 
+
 @dataclass
 class FluxModelConfig:
     dit_path: str | os.PathLike
@@ -460,7 +462,7 @@ class FluxImagePipeline(BasePipeline):
         tokenizer_2: T5TokenizerFast,
         text_encoder_1: FluxTextEncoder1,
         text_encoder_2: FluxTextEncoder2,
-        dit: FluxDiT,
+        dit: Union[FluxDiT, FluxDiTFBCache],
         vae_decoder: FluxVAEDecoder,
         vae_encoder: FluxVAEEncoder,
         load_text_encoder: bool = True,
@@ -518,6 +520,8 @@ class FluxImagePipeline(BasePipeline):
         offload_mode: str | None = None,
         parallelism: int = 1,
         use_cfg_parallel: bool = False,
+        use_fb_cache: bool = False,
+        fb_cache_relative_l1_threshold: float = 0.05,
     ) -> "FluxImagePipeline":
         model_config = (
             model_path_or_config
@@ -562,13 +566,23 @@ class FluxImagePipeline(BasePipeline):
         vae_encoder = FluxVAEEncoder.from_state_dict(vae_state_dict, device=init_device, dtype=model_config.vae_dtype)
 
         with LoRAContext():
-            dit = FluxDiT.from_state_dict(
-                dit_state_dict,
-                device=init_device,
-                dtype=model_config.dit_dtype,
-                in_channel=control_type.get_in_channel(),
-                attn_impl=model_config.dit_attn_impl,
-            )
+            if use_fb_cache:
+                dit = FluxDiTFBCache.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                    relative_l1_threshold=fb_cache_relative_l1_threshold,
+                )
+            else:
+                dit = FluxDiT.from_state_dict(
+                    dit_state_dict,
+                    device=init_device,
+                    dtype=model_config.dit_dtype,
+                    in_channel=control_type.get_in_channel(),
+                    attn_impl=model_config.dit_attn_impl,
+                )
             if model_config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
@@ -968,6 +982,8 @@ class FluxImagePipeline(BasePipeline):
         controlnet_params: List[ControlNetParams] | ControlNetParams = [],
         progress_callback: Optional[Callable] = None,  # def progress_callback(current, total, status)
     ):
+        if isinstance(self.dit, FluxDiTFBCache):
+            self.dit.refresh_cache_status(num_inference_steps)
         if not isinstance(controlnet_params, list):
             controlnet_params = [controlnet_params]
         if self.control_type != ControlType.normal:
