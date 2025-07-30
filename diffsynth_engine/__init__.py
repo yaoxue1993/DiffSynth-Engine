@@ -3,13 +3,14 @@ from .configs import (
     SDXLPipelineConfig,
     FluxPipelineConfig,
     WanPipelineConfig,
+    ControlNetParams,
+    ControlType,
 )
 from .pipelines import (
     FluxImagePipeline,
     SDXLImagePipeline,
     SDImagePipeline,
     WanVideoPipeline,
-    ControlNetParams,
 )
 from .models.flux import FluxControlNet, FluxIPAdapter, FluxRedux
 from .models.sd import SDControlNet
@@ -44,6 +45,7 @@ __all__ = [
     "FluxReplaceByControlTool",
     "FluxReduxRefTool",
     "ControlNetParams",
+    "ControlType",
     "fetch_model",
     "fetch_modelscope_model",
     "fetch_civitai_model",
