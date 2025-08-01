@@ -1,8 +1,10 @@
 import os
 import torch
 import numpy as np
+from einops import rearrange
 from typing import Dict, List, Tuple
 from PIL import Image
+
 from diffsynth_engine.configs import BaseConfig
 from diffsynth_engine.utils.offload import enable_sequential_cpu_offload
 from diffsynth_engine.utils.fp8_linear import enable_fp8_autocast
@@ -38,7 +40,6 @@ class BasePipeline:
         self.dtype = dtype
         self.offload_mode = None
         self.model_names = []
-        self._models_offload_params = {}
 
     @classmethod
     def from_pretrained(cls, model_path_or_config: str | BaseConfig) -> "BasePipeline":
@@ -140,9 +141,18 @@ class BasePipeline:
         return [BasePipeline.preprocess_image(image) for image in images]
 
     @staticmethod
-    def vae_output_to_image(vae_output: torch.Tensor) -> Image.Image:
-        image = vae_output[0].cpu().float().permute(1, 2, 0).numpy()
-        image = Image.fromarray(((image / 2 + 0.5).clip(0, 1) * 255).astype("uint8"))
+    def vae_output_to_image(vae_output: torch.Tensor) -> Image.Image | List[Image.Image]:
+        vae_output = vae_output[0]
+        if vae_output.ndim == 4:
+            vae_output = rearrange(vae_output, "c t h w -> t h w c")
+        else:
+            vae_output = rearrange(vae_output, "c h w -> h w c")
+
+        image = ((vae_output.float() / 2 + 0.5).clip(0, 1) * 255).cpu().numpy().astype("uint8")
+        if image.ndim == 4:
+            image = [Image.fromarray(img) for img in image]
+        else:
+            image = Image.fromarray(image)
         return image
 
     @staticmethod
@@ -230,10 +240,6 @@ class BasePipeline:
             model = getattr(self, model_name)
             if model is not None:
                 model.to("cpu")
-                self._models_offload_params[model_name] = {}
-                for name, param in model.named_parameters(recurse=True):
-                    param.data = param.data.pin_memory()
-                    self._models_offload_params[model_name][name] = param.data
         self.offload_mode = "cpu_offload"
 
     def _enable_sequential_cpu_offload(self):
@@ -272,9 +278,7 @@ class BasePipeline:
                     and (p := next(model.parameters(), None)) is not None
                     and p.device != torch.device("cpu")
                 ):
-                    param_cache = self._models_offload_params[model_name]
-                    for name, param in model.named_parameters(recurse=True):
-                        param.data = param_cache[name]
+                    model.to("cpu")
         # load the needed models to device
         for model_name in load_model_names:
             model = getattr(self, model_name)
