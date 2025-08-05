@@ -88,6 +88,52 @@ We will continuously update DiffSynth-Engine to support more models. (Wan2.2 LoR
 
 After the model is downloaded, load the model with the corresponding pipeline and perform inference.
 
+
+### Image Generation(Qwen-Image)
+
+The following code calls `QwenImagePipeline` to load the [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) model and generate an image. Recommended resolutions are 928×1664, 1104×1472, 1328×1328, 1472×1104, and 1664×928, with a suggested cfg_scale of 4. If no negative_prompt is provided, it defaults to a single space character (not an empty string). For multi-GPU parallelism, currently only cfg parallelism is supported (parallelism=2), with other optimization efforts underway.
+
+```python
+from diffsynth_engine import fetch_model, QwenImagePipeline, QwenImagePipelineConfig
+
+config = QwenImagePipelineConfig.basic_config(
+    model_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="transformer/*.safetensors"),
+    encoder_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="text_encoder/*.safetensors"),
+    vae_path=fetch_model("MusePublic/Qwen-image", revision="v1", path="vae/*.safetensors"),
+    parallelism=2,
+)
+pipe = QwenImagePipeline.from_pretrained(config)
+
+prompt = """
+    一副典雅庄重的对联悬挂于厅堂之中，房间是个安静古典的中式布置，桌子上放着一些青花瓷，对联上左书“思涌如泉万类灵感皆可触”，右书“智启于问千机代码自天成”，横批“AI脑洞力”，字体飘逸灵动，兼具传统笔意与未来感。中间挂着一幅中国风的画作，内容是岳阳楼，云雾缭绕间似有数据流光隐现，古今交融，意境深远。
+    """
+negative_prompt = " "
+image = pipe(
+    prompt=prompt,
+    negative_prompt=negative_prompt,
+    cfg_scale=4.0,
+    width=1104,
+    height=1472,
+    num_inference_steps=30,
+    seed=42,
+)
+image.save("image.png")
+```
+
+Please note that if some necessary modules, like text encoders, are missing from a model repository, the pipeline will automatically download the required files.
+
+#### Detailed Parameters(Qwen-Image)
+
+In the image generation pipeline `pipe`, we can use the following parameters for fine-grained control:
+
+* `prompt`: The prompt, used to describe the content of the generated image, It supports multiple languages (Chinese, English, Japanese, etc.), e.g., “一只猫” (Chinese), "a cat" (English), or "庭を走る猫" (Japanese).
+* `negative_prompt`: The negative prompt, used to describe content you do not want in the image, it defaults to a single space character (not an empty string), e.g., "ugly".
+* `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
+* `height`: Image height.
+* `width`: Image width.
+* `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
+* `seed`: The random seed. A fixed seed ensures reproducible results.
+
 ### Image Generation
 
 The following code calls `FluxImagePipeline` to load the [MajicFlus](https://www.modelscope.cn/models/MAILAND/majicflus_v1/summary?version=v1.0) model and generate an image. To load other types of models, replace `FluxImagePipeline` and `FluxPipelineConfig` in the code with the corresponding pipeline and config.
@@ -109,16 +155,16 @@ Please note that if some necessary modules, like text encoders, are missing from
 
 In the image generation pipeline `pipe`, we can use the following parameters for fine-grained control:
 
-*   `prompt`: The prompt, used to describe the content of the generated image, e.g., "a cat".
-*   `negative_prompt`: The negative prompt, used to describe content you do not want in the image, e.g., "ugly".
-*   `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
-*   `clip_skip`: The number of layers to skip in the [CLIP](https://arxiv.org/abs/2103.00020) text encoder. The more layers skipped, the lower the text-image correlation, but this can lead to interesting variations in the generated content.
-*   `input_image`: Input image, used for image-to-image generation.
-*   `denoising_strength`: The denoising strength. When set to 1, a full generation process is performed. When set to a value between 0 and 1, some information from the input image is preserved.
-*   `height`: Image height.
-*   `width`: Image width.
-*   `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
-*   `seed`: The random seed. A fixed seed ensures reproducible results.
+* `prompt`: The prompt, used to describe the content of the generated image, e.g., "a cat".
+* `negative_prompt`: The negative prompt, used to describe content you do not want in the image, e.g., "ugly".
+* `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the image but reduces the diversity of the generated content.
+* `clip_skip`: The number of layers to skip in the [CLIP](https://arxiv.org/abs/2103.00020) text encoder. The more layers skipped, the lower the text-image correlation, but this can lead to interesting variations in the generated content.
+* `input_image`: Input image, used for image-to-image generation.
+* `denoising_strength`: The denoising strength. When set to 1, a full generation process is performed. When set to a value between 0 and 1, some information from the input image is preserved.
+* `height`: Image height.
+* `width`: Image width.
+* `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher image quality.
+* `seed`: The random seed. A fixed seed ensures reproducible results.
 
 #### Loading LoRA
 
@@ -177,17 +223,17 @@ save_video(video, "video.mp4")
 
 In the video generation pipeline `pipe`, we can use the following parameters for fine-grained control:
 
-*   `prompt`: The prompt, used to describe the content of the generated video, e.g., "a cat".
-*   `negative_prompt`: The negative prompt, used to describe content you do not want in the video, e.g., "ugly".
-*   `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the video but reduces the diversity of the generated content.
-*   `input_image`: Input image, only effective in image-to-video models, such as [Wan-AI/Wan2.1-I2V-14B-720P](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-720P).
-*   `input_video`: Input video, used for video-to-video generation.
-*   `denoising_strength`: The denoising strength. When set to 1, a full generation process is performed. When set to a value between 0 and 1, some information from the input video is preserved.
-*   `height`: Video frame height.
-*   `width`: Video frame width.
-*   `num_frames`: Number of video frames.
-*   `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher video quality.
-*   `seed`: The random seed. A fixed seed ensures reproducible results.
+* `prompt`: The prompt, used to describe the content of the generated video, e.g., "a cat".
+* `negative_prompt`: The negative prompt, used to describe content you do not want in the video, e.g., "ugly".
+* `cfg_scale`: The guidance scale for [Classifier-Free Guidance](https://arxiv.org/abs/2207.12598). A larger value usually results in stronger correlation between the text and the video but reduces the diversity of the generated content.
+* `input_image`: Input image, only effective in image-to-video models, such as [Wan-AI/Wan2.1-I2V-14B-720P](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-720P).
+* `input_video`: Input video, used for video-to-video generation.
+* `denoising_strength`: The denoising strength. When set to 1, a full generation process is performed. When set to a value between 0 and 1, some information from the input video is preserved.
+* `height`: Video frame height.
+* `width`: Video frame width.
+* `num_frames`: Number of video frames.
+* `num_inference_steps`: The number of inference steps. Generally, more steps lead to longer computation time but higher video quality.
+* `seed`: The random seed. A fixed seed ensures reproducible results.
 
 #### Loading LoRA
 
