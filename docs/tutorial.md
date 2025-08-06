@@ -88,7 +88,6 @@ We will continuously update DiffSynth-Engine to support more models. (Wan2.2 LoR
 
 After the model is downloaded, load the model with the corresponding pipeline and perform inference.
 
-
 ### Image Generation(Qwen-Image)
 
 The following code calls `QwenImagePipeline` to load the [Qwen-Image](https://www.modelscope.cn/models/Qwen/Qwen-Image) model and generate an image. Recommended resolutions are 928×1664, 1104×1472, 1328×1328, 1472×1104, and 1664×928, with a suggested cfg_scale of 4. If no negative_prompt is provided, it defaults to a single space character (not an empty string). For multi-GPU parallelism, currently only cfg parallelism is supported (parallelism=2), with other optimization efforts underway.
@@ -122,7 +121,7 @@ image.save("image.png")
 
 Please note that if some necessary modules, like text encoders, are missing from a model repository, the pipeline will automatically download the required files.
 
-#### Detailed Parameters(Qwen-Image)
+### Detailed Parameters(Qwen-Image)
 
 In the image generation pipeline `pipe`, we can use the following parameters for fine-grained control:
 
