@@ -5,8 +5,9 @@ from diffsynth_engine import (
     FluxImagePipeline,
     FluxRedux,
     fetch_model,
+    FluxStateDicts
 )
-from typing import List, Tuple, Optional, Callable
+from typing import List, Tuple, Optional, Callable, Dict
 from PIL import Image
 import torch
 
@@ -19,8 +20,19 @@ class FluxReplaceByControlTool:
 
     def __init__(
         self,
+        flux_pipe: FluxImagePipeline,
+        redux: FluxRedux,
+        controlnet: FluxControlNet,
+    ):
+        self.pipe = flux_pipe
+        self.pipe.load_redux(redux)
+        self.controlnet = controlnet
+
+    @classmethod
+    def from_pretrained(
+        cls,
         flux_model_path: str,
-        load_text_encoder=True,
+        load_text_encoder: bool = True,
         device: str = "cuda:0",
         dtype: torch.dtype = torch.bfloat16,
         offload_mode: Optional[str] = None,
@@ -32,17 +44,42 @@ class FluxReplaceByControlTool:
             device=device,
             offload_mode=offload_mode,
         )
-        self.pipe: FluxImagePipeline = FluxImagePipeline.from_pretrained(config)
+        flux_pipe = FluxImagePipeline.from_pretrained(config)
         redux_model_path = fetch_model("muse/flux1-redux-dev", path="flux1-redux-dev.safetensors", revision="v1")
-        flux_redux = FluxRedux.from_pretrained(redux_model_path, device=device)
-        self.pipe.load_redux(flux_redux)
-        self.controlnet = FluxControlNet.from_pretrained(
+        redux = FluxRedux.from_pretrained(redux_model_path, device=device, dtype=dtype)
+        controlnet = FluxControlNet.from_pretrained(
             fetch_model(
-                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", path="diffusion_pytorch_model.safetensors"
+                "alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta",
+                path="diffusion_pytorch_model.safetensors"
             ),
             device=device,
             dtype=torch.bfloat16,
         )
+        return cls(flux_pipe, redux, controlnet)
+
+    @classmethod
+    def from_state_dict(
+        cls,
+        flux_state_dicts: FluxStateDicts,
+        redux_state_dict: Dict[str, torch.Tensor],
+        controlnet_state_dict: Dict[str, torch.Tensor],
+        load_text_encoder: bool = True,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.bfloat16,
+        offload_mode: Optional[str] = None,
+    ):
+        config = FluxPipelineConfig(
+            model_path="",
+            model_dtype=dtype,
+            load_text_encoder=load_text_encoder,
+            device=device,
+            offload_mode=offload_mode,
+        )
+        flux_pipe = FluxImagePipeline.from_state_dict(flux_state_dicts, config)
+        redux = FluxRedux.from_state_dict(redux_state_dict, device=device, dtype=dtype)
+        controlnet = FluxControlNet.from_state_dict(controlnet_state_dict, device=device, dtype=dtype)
+        return cls(flux_pipe, redux, controlnet)
+
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         self.pipe.load_loras(lora_list, fused, save_original_weight)
