@@ -185,6 +185,16 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 
 
 @dataclass
+class HunyuanPipelineConfig(BaseConfig):
+    model_path: str | os.PathLike | List[str | os.PathLike]
+    model_dtype: torch.dtype = torch.float16
+    vae_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    vae_dtype: torch.dtype = torch.float16
+    image_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    image_encoder_dtype: torch.dtype = torch.float16
+
+
+@dataclass
 class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
     encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
