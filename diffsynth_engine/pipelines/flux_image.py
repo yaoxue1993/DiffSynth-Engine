@@ -451,42 +451,57 @@ class FluxImagePipeline(BasePipeline):
         else:
             config = model_path_or_config
 
-        return cls.from_state_dict(FluxStateDicts(), config)
+        logger.info(f"loading state dict from {config.model_path} ...")
+        model_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+
+        if config.vae_path is None:
+            config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
+        logger.info(f"loading state dict from {config.vae_path} ...")
+        vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+
+        clip_state_dict = None
+        if config.clip_path is None and config.load_text_encoder:
+            config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
+        if config.load_text_encoder:
+            logger.info(f"loading state dict from {config.clip_path} ...")
+            clip_state_dict = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
+
+        t5_state_dict = None
+        if config.t5_path is None and config.load_text_encoder:
+            config.t5_path = fetch_model(
+                "muse/FLUX.1-dev-fp8",
+                path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"],
+            )
+        if config.load_text_encoder:
+            logger.info(f"loading state dict from {config.t5_path} ...")
+            t5_state_dict = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
+
+        state_dicts = FluxStateDicts(
+            model=model_state_dict,
+            vae=vae_state_dict,
+            clip=clip_state_dict,
+            t5=t5_state_dict,
+        )
+        return cls.from_state_dict(state_dicts, config)
 
     @classmethod
     def from_state_dict(cls, state_dicts: FluxStateDicts, config: FluxPipelineConfig) -> "FluxImagePipeline":
-        if state_dicts.model is None:
-            if config.model_path is None:
-                raise ValueError("`model_path` cannot be empty")
-            logger.info(f"loading state dict from {config.model_path} ...")
-            state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+        if config.parallelism > 1:
+            pipe = ParallelWrapper(
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
+            )
+            pipe.load_module(cls._from_state_dict, state_dicts=state_dicts, config=config)
+        else:
+            pipe = cls._from_state_dict(state_dicts, config)
+        return pipe
 
-        if state_dicts.vae is None:
-            if config.vae_path is None:
-                config.vae_path = fetch_model("muse/FLUX.1-dev-fp8", path="ae-bf16.safetensors")
-            logger.info(f"loading state dict from {config.vae_path} ...")
-            state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-        if state_dicts.clip is None and config.load_text_encoder:
-            if config.clip_path is None:
-                config.clip_path = fetch_model("muse/FLUX.1-dev-fp8", path="clip-bf16.safetensors")
-            logger.info(f"loading state dict from {config.clip_path} ...")
-            state_dicts.clip = cls.load_model_checkpoint(config.clip_path, device="cpu", dtype=config.clip_dtype)
-        if state_dicts.t5 is None and config.load_text_encoder:
-            if config.t5_path is None:
-                config.t5_path = fetch_model(
-                    "muse/FLUX.1-dev-fp8",
-                    path=["t5-fp8-00001-of-00002.safetensors", "t5-fp8-00002-of-00002.safetensors"],
-                )
-            logger.info(f"loading state dict from {config.t5_path} ...")
-            state_dicts.t5 = cls.load_model_checkpoint(config.t5_path, device="cpu", dtype=config.t5_dtype)
-
-        cls.convert(state_dicts.model, config.model_dtype)
-        cls.convert(state_dicts.vae, config.vae_dtype)
-        if config.load_text_encoder:
-            cls.convert(state_dicts.clip, config.clip_dtype)
-            cls.convert(state_dicts.t5, config.t5_dtype)
-
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+    @classmethod
+    def _from_state_dict(cls, state_dicts: FluxStateDicts, config: FluxPipelineConfig) -> "FluxImagePipeline":
+        init_device = "cpu" if config.offload_mode is not None else config.device
         if config.load_text_encoder:
             tokenizer = CLIPTokenizer.from_pretrained(FLUX_TOKENIZER_1_CONF_PATH)
             tokenizer_2 = T5TokenizerFast.from_pretrained(FLUX_TOKENIZER_2_CONF_PATH)
@@ -554,22 +569,12 @@ class FluxImagePipeline(BasePipeline):
                 model_names=["text_encoder_2"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if config.parallelism > 1:
-            pipe = ParallelWrapper(
-                pipe,
-                cfg_degree=config.cfg_degree,
-                sp_ulysses_degree=config.sp_ulysses_degree,
-                sp_ring_degree=config.sp_ring_degree,
-                tp_degree=config.tp_degree,
-                use_fsdp=config.use_fsdp,
-                device="cuda",
-            )
         if config.use_torch_compile:
             pipe.compile()
         return pipe
 
     def compile(self):
-        self.dit.compile()
+        self.dit.compile_repeated_blocks(dynamic=True)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
@@ -586,9 +591,6 @@ class FluxImagePipeline(BasePipeline):
         self.dit.unload_loras()
         self.text_encoder_1.unload_loras()
         self.text_encoder_2.unload_loras()
-
-    def denoising_model(self):
-        return self.dit
 
     def encode_prompt(self, prompt, clip_skip: int = 2):
         if (

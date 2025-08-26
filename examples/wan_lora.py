@@ -8,7 +8,6 @@ if __name__ == "__main__":
     config = WanPipelineConfig.basic_config(
         model_path=fetch_model("MusePublic/wan2.1-1.3b", path="dit.safetensors"),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
     pipe.load_lora(
@@ -25,6 +24,6 @@ if __name__ == "__main__":
         height=832,
         seed=42,
     )
-    save_video(video, "wan_t2v_lora.mp4", fps=pipe.config.fps)
+    save_video(video, "wan_t2v_lora.mp4", fps=pipe.get_default_fps())
 
     del pipe

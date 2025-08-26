@@ -128,42 +128,55 @@ class QwenImagePipeline(BasePipeline):
         else:
             config = model_path_or_config
 
-        return cls.from_state_dict(QwenImageStateDicts(), config)
+        logger.info(f"loading state dict from {config.model_path} ...")
+        model_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
+
+        if config.vae_path is None:
+            config.vae_path = fetch_model(
+                "MusePublic/Qwen-image", revision="v1", path="vae/diffusion_pytorch_model.safetensors"
+            )
+        logger.info(f"loading state dict from {config.vae_path} ...")
+        vae_state_dict = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
+
+        if config.encoder_path is None:
+            config.encoder_path = fetch_model(
+                "MusePublic/Qwen-image",
+                revision="v1",
+                path=[
+                    "text_encoder/model-00001-of-00004.safetensors",
+                    "text_encoder/model-00002-of-00004.safetensors",
+                    "text_encoder/model-00003-of-00004.safetensors",
+                    "text_encoder/model-00004-of-00004.safetensors",
+                ],
+            )
+        logger.info(f"loading state dict from {config.encoder_path} ...")
+        encoder_state_dict = cls.load_model_checkpoint(config.encoder_path, device="cpu", dtype=config.encoder_dtype)
+
+        state_dicts = QwenImageStateDicts(
+            model=model_state_dict,
+            vae=vae_state_dict,
+            encoder=encoder_state_dict,
+        )
+        return cls.from_state_dict(state_dicts, config)
 
     @classmethod
     def from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
-        if state_dicts.model is None:
-            if config.model_path is None:
-                raise ValueError("`model_path` cannot be empty")
-            logger.info(f"loading state dict from {config.model_path} ...")
-            state_dicts.model = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
-
-        if state_dicts.vae is None:
-            if config.vae_path is None:
-                config.vae_path = fetch_model(
-                    "MusePublic/Qwen-image", revision="v1", path="vae/diffusion_pytorch_model.safetensors"
-                )
-            logger.info(f"loading state dict from {config.vae_path} ...")
-            state_dicts.vae = cls.load_model_checkpoint(config.vae_path, device="cpu", dtype=config.vae_dtype)
-
-        if state_dicts.encoder is None:
-            if config.encoder_path is None:
-                config.encoder_path = fetch_model(
-                    "MusePublic/Qwen-image",
-                    revision="v1",
-                    path=[
-                        "text_encoder/model-00001-of-00004.safetensors",
-                        "text_encoder/model-00002-of-00004.safetensors",
-                        "text_encoder/model-00003-of-00004.safetensors",
-                        "text_encoder/model-00004-of-00004.safetensors",
-                    ],
-                )
-            logger.info(f"loading state dict from {config.encoder_path} ...")
-            state_dicts.encoder = cls.load_model_checkpoint(
-                config.encoder_path, device="cpu", dtype=config.encoder_dtype
+        if config.parallelism > 1:
+            pipe = ParallelWrapper(
+                cfg_degree=config.cfg_degree,
+                sp_ulysses_degree=config.sp_ulysses_degree,
+                sp_ring_degree=config.sp_ring_degree,
+                tp_degree=config.tp_degree,
+                use_fsdp=config.use_fsdp,
             )
+            pipe.load_module(cls._from_state_dict, state_dicts=state_dicts, config=config)
+        else:
+            pipe = cls._from_state_dict(state_dicts, config)
+        return pipe
 
-        init_device = "cpu" if config.parallelism > 1 or config.offload_mode is not None else config.device
+    @classmethod
+    def _from_state_dict(cls, state_dicts: QwenImageStateDicts, config: QwenImagePipelineConfig) -> "QwenImagePipeline":
+        init_device = "cpu" if config.offload_mode is not None else config.device
         tokenizer = Qwen2TokenizerFast.from_pretrained(QWEN_IMAGE_TOKENIZER_CONF_PATH)
         processor = Qwen2VLProcessor.from_pretrained(
             tokenizer_config_path=QWEN_IMAGE_TOKENIZER_CONF_PATH,
@@ -237,22 +250,12 @@ class QwenImagePipeline(BasePipeline):
                 model_names=["encoder"], compute_dtype=pipe.dtype, use_fp8_linear=config.use_fp8_linear
             )
 
-        if config.parallelism > 1:
-            pipe = ParallelWrapper(
-                pipe,
-                cfg_degree=config.cfg_degree,
-                sp_ulysses_degree=config.sp_ulysses_degree,
-                sp_ring_degree=config.sp_ring_degree,
-                tp_degree=config.tp_degree,
-                use_fsdp=config.use_fsdp,
-                device="cuda",
-            )
         if config.use_torch_compile:
             pipe.compile()
         return pipe
 
     def compile(self):
-        self.dit.compile()
+        self.dit.compile_repeated_blocks(dynamic=True)
 
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         assert self.config.tp_degree is None or self.config.tp_degree == 1, (
@@ -406,7 +409,8 @@ class QwenImagePipeline(BasePipeline):
             prompt_emb = torch.cat([prompt_emb, negative_prompt_emb], dim=0)
             prompt_embeds_mask = torch.cat([prompt_embeds_mask, negative_prompt_embeds_mask], dim=0)
             latents = torch.cat([latents, latents], dim=0)
-            image_latents = torch.cat([image_latents, image_latents], dim=0)
+            if image_latents is not None:
+                image_latents = torch.cat([image_latents, image_latents], dim=0)
             timestep = torch.cat([timestep, timestep], dim=0)
             noise_pred = self.predict_noise(
                 latents,
@@ -441,9 +445,7 @@ class QwenImagePipeline(BasePipeline):
         return noise_pred
 
     def prepare_image_latents(self, input_image: Image.Image):
-        image = self.preprocess_image(input_image).to(
-            device=self.device, dtype=self.vae.model.encoder.conv1.weight.dtype
-        )
+        image = self.preprocess_image(input_image).to(dtype=self.config.vae_dtype)
         image = image.unsqueeze(2)
         image_latents = self.vae.encode(
             image,
@@ -452,7 +454,7 @@ class QwenImagePipeline(BasePipeline):
             tile_size=self.vae_tile_size,
             tile_stride=self.vae_tile_stride,
         )
-        image_latents = image_latents.squeeze(2)
+        image_latents = image_latents.squeeze(2).to(device=self.device)
         return image_latents
 
     def calculate_dimensions(self, target_area, ratio):
@@ -488,13 +490,15 @@ class QwenImagePipeline(BasePipeline):
         # dynamic shift
         image_seq_len = math.ceil(height // 16) * math.ceil(width // 16)
         mu = calculate_shift(image_seq_len, max_shift=0.9, max_seq_len=8192)
+        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
+        # Initialize sampler
+        self.sampler.initialize(sigmas=sigmas)
+
+        self.load_models_to_device(["vae"])
         if input_image:
             image_latents = self.prepare_image_latents(input_image)
         else:
             image_latents = None
-        init_latents, latents, sigmas, timesteps = self.prepare_latents(noise, num_inference_steps, mu)
-        # Initialize sampler
-        self.sampler.initialize(sigmas=sigmas)
 
         self.load_models_to_device(["encoder"])
         if image_latents is not None:

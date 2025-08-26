@@ -18,7 +18,6 @@ if __name__ == "__main__":
             ],
         ),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
 
@@ -32,6 +31,6 @@ if __name__ == "__main__":
         height=1280,
         seed=42,
     )
-    save_video(video, "wan_ti2v.mp4", fps=pipe.config.fps)
+    save_video(video, "wan_ti2v.mp4", fps=pipe.get_default_fps())
 
     del pipe

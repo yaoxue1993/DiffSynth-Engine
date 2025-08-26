@@ -14,7 +14,6 @@ if __name__ == "__main__":
             path="open-clip-xlm-roberta-large-vit-huge-14.safetensors",
         ),
         parallelism=4,
-        offload_mode="cpu_offload",
     )
     pipe = WanVideoPipeline.from_pretrained(config)
 
@@ -31,6 +30,6 @@ if __name__ == "__main__":
         cfg_scale=5.5,
         seed=42,
     )
-    save_video(video, "wan_flf2v.mp4", fps=pipe.config.fps)
+    save_video(video, "wan_flf2v.mp4", fps=pipe.get_default_fps())
 
     del pipe
