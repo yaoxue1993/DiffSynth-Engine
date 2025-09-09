@@ -185,6 +185,34 @@ class WanPipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, Bas
 
 
 @dataclass
+class WanSpeech2VideoPipelineConfig(WanPipelineConfig):
+    audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
+    audio_encoder_dtype: torch.dtype = torch.float32
+
+    @classmethod
+    def basic_config(
+        cls,
+        model_path: str | os.PathLike | List[str | os.PathLike],
+        audio_encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None,
+        device: str = "cuda",
+        parallelism: int = 1,
+        offload_mode: Optional[str] = None,
+    ) -> "WanSpeech2VideoPipelineConfig":
+        return cls(
+            model_path=model_path,
+            audio_encoder_path=audio_encoder_path,
+            device=device,
+            parallelism=parallelism,
+            use_cfg_parallel=True if parallelism > 1 else False,
+            use_fsdp=True if parallelism > 1 else False,
+            offload_mode=offload_mode,
+        )
+
+    def __post_init__(self):
+        init_parallel_config(self)
+
+
+@dataclass
 class QwenImagePipelineConfig(AttentionConfig, OptimizationConfig, ParallelConfig, BaseConfig):
     model_path: str | os.PathLike | List[str | os.PathLike]
     encoder_path: Optional[str | os.PathLike | List[str | os.PathLike]] = None
@@ -272,6 +300,14 @@ class WanStateDicts:
     t5: Dict[str, torch.Tensor]
     vae: Dict[str, torch.Tensor]
     image_encoder: Optional[Dict[str, torch.Tensor]] = None
+
+
+@dataclass
+class WanS2VStateDicts:
+    model: Dict[str, torch.Tensor] | Dict[str, Dict[str, torch.Tensor]]
+    t5: Dict[str, torch.Tensor]
+    vae: Dict[str, torch.Tensor]
+    audio_encoder: Dict[str, torch.Tensor]
 
 
 @dataclass
