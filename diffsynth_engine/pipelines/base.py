@@ -51,6 +51,20 @@ class BasePipeline:
     def from_state_dict(cls, state_dicts: BaseStateDicts, pipeline_config: BaseConfig) -> "BasePipeline":
         raise NotImplementedError()
 
+    def update_weights(self, state_dicts: BaseStateDicts) -> None:
+        raise NotImplementedError()
+    
+    @staticmethod
+    def update_component(
+        component: torch.nn.Module,
+        state_dict: Dict[str, torch.Tensor],
+        device: str,
+        dtype: torch.dtype,
+    ) -> None:
+        if component and state_dict:
+            component.load_state_dict(state_dict, assign=True)
+            component.to(device=device, dtype=dtype, non_blocking=True)
+
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         for lora_path, lora_scale in lora_list:
             logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
