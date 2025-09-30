@@ -18,6 +18,9 @@ import argparse
 import time
 import torch
 import re
+import os
+
+# 使用Sage Attention替代XFormers (兼容RTX 5090)
 from torch.profiler import profile, record_function, ProfilerActivity
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple, Optional, List
@@ -96,8 +99,10 @@ class FluxBenchmark(BaseModelBenchmark):
     def __init__(self, model_path: str):
         super().__init__(model_path)
         from diffsynth_engine import FluxImagePipeline, FluxPipelineConfig
+        from diffsynth_engine.configs.pipeline import AttnImpl
         self.pipeline_class = FluxImagePipeline
         self.config_class = FluxPipelineConfig
+        self.AttnImpl = AttnImpl
     
     def create_pipeline(self, mode: str):
         """Create FLUX pipeline with specified optimization mode."""
@@ -108,7 +113,19 @@ class FluxBenchmark(BaseModelBenchmark):
                 model_path=self.model_path,
                 device="cuda",
                 model_dtype=torch.bfloat16,
-                use_fp8_linear=True,
+                #use_fp8_linear=True,
+                dit_attn_impl=self.AttnImpl.SAGE,  # 使用Sage Attention替代XFormers
+                offload_mode="cpu_offload"
+            )
+        elif mode == "fp8_optimized":
+            config = self.config_class(
+                model_path=self.model_path,
+                device="cuda",
+                model_dtype=torch.bfloat16,
+                use_fp8_linear_optimized=True,
+                fp8_low_memory_mode=True,  # 启用低内存模式
+                dit_attn_impl=self.AttnImpl.SAGE,  # 使用优化的FP8实现
+                offload_mode="cpu_offload"
             )
         elif mode == "compile":
             config = self.config_class(
@@ -124,6 +141,18 @@ class FluxBenchmark(BaseModelBenchmark):
                 model_dtype=torch.bfloat16,
                 use_fp8_linear=True,
                 use_torch_compile=True,
+                offload_mode="cpu_offload",
+                dit_attn_impl=self.AttnImpl.SAGE,  # 使用Sage Attention替代XFormers
+            )
+        elif mode == "fp8_optimized_compile":
+            config = self.config_class(
+                model_path=self.model_path,
+                device="cuda",
+                model_dtype=torch.bfloat16,
+                use_fp8_linear_optimized=True,
+                use_torch_compile=True,
+                offload_mode="cpu_offload",
+                dit_attn_impl=self.AttnImpl.SAGE,  # 使用优化的FP8实现 + Compile
             )
         elif mode == "offload":
             config = self.config_class(
@@ -276,8 +305,8 @@ def main():
         help="Model type to benchmark"
     )
     parser.add_argument(
-        "--mode", 
-        choices=["basic", "fp8", "compile", "fp8_compile", "offload", "all"],
+        "--mode",
+        choices=["basic", "fp8", "fp8_optimized", "compile", "fp8_compile", "fp8_optimized_compile", "offload", "all"],
         default="basic",
         help="Optimization mode"
     )
@@ -355,7 +384,7 @@ def main():
         return
     
     # Modes to benchmark
-    modes = ["basic", "fp8", "compile", "fp8_compile", "offload"] if args.mode == "all" else [args.mode]
+    modes = ["basic", "fp8", "fp8_optimized", "compile", "fp8_compile", "fp8_optimized_compile", "offload"] if args.mode == "all" else [args.mode]
     
     results = {}
     

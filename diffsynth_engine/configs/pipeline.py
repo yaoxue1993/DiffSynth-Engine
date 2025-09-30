@@ -45,6 +45,8 @@ class AttentionConfig:
 @dataclass
 class OptimizationConfig:
     use_fp8_linear: bool = False
+    use_fp8_linear_optimized: bool = False  # Use optimized FP8 implementation
+    fp8_low_memory_mode: bool = False  # Disable FP8 caching to save memory
     use_fbcache: bool = False
     fbcache_relative_l1_threshold: float = 0.05
     use_torch_compile: bool = False

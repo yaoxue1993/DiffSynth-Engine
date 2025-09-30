@@ -17,11 +17,14 @@ from diffsynth_engine.pipelines import BasePipeline, LoRAStateDictConverter
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
+from diffsynth_engine.utils.fp8_linear_optimized import enable_fp8_linear_optimized
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 
 
 logger = logging.get_logger(__name__)
+
+
 
 
 class WanLoRAConverter(LoRAStateDictConverter):
@@ -41,7 +44,8 @@ class WanLoRAConverter(LoRAStateDictConverter):
                 lora_args["alpha"] = lora_args["rank"]
             key = key.replace(".lora_A.default.weight", "")
             dit_dict[key] = lora_args
-        return {"dit": dit_dict}
+        # Lightning LoRA should be applied to dit2 (low noise model)
+        return {"dit2": dit_dict}
 
     def _from_civitai(self, state_dict):
         dit_dict = {}
@@ -59,7 +63,8 @@ class WanLoRAConverter(LoRAStateDictConverter):
                 lora_args["alpha"] = lora_args["rank"]
             key = key.replace("diffusion_model.", "").replace(".lora_A.weight", "")
             dit_dict[key] = lora_args
-        return {"dit": dit_dict}
+        # Lightning LoRA should be applied to dit2 (low noise model)
+        return {"dit2": dit_dict}
 
     def _from_fun(self, state_dict):
         dit_dict = {}
@@ -82,6 +87,27 @@ class WanLoRAConverter(LoRAStateDictConverter):
             dit_dict[key] = lora_args
         return {"dit": dit_dict}
 
+    def _from_lightning(self, state_dict):
+        """Convert Lightning LoRA format with .lora_up/.lora_down naming"""
+        dit_dict = {}
+        for key, param in state_dict.items():
+            if ".lora_down.weight" not in key:
+                continue
+
+            lora_args = {}
+            lora_args["up"] = state_dict[key.replace(".lora_down.weight", ".lora_up.weight")]
+            lora_args["down"] = param
+            lora_args["rank"] = lora_args["up"].shape[1]
+            if key.replace(".lora_down.weight", ".alpha") in state_dict:
+                lora_args["alpha"] = state_dict[key.replace(".lora_down.weight", ".alpha")]
+            else:
+                lora_args["alpha"] = lora_args["rank"]
+            # Clean up the key: remove diffusion_model prefix and .lora_down.weight suffix
+            clean_key = key.replace("diffusion_model.", "").replace(".lora_down.weight", "")
+            dit_dict[clean_key] = lora_args
+        # Lightning LoRA should be applied to dit2 (low noise model)
+        return {"dit2": dit_dict}
+
     def convert(self, state_dict):
         if "lora_unet_blocks_0_cross_attn_k.lora_down.weight" in state_dict:
             state_dict = self._from_fun(state_dict)
@@ -89,6 +115,9 @@ class WanLoRAConverter(LoRAStateDictConverter):
         elif "diffusion_model.blocks.0.cross_attn.k.lora_A.weight" in state_dict:
             state_dict = self._from_civitai(state_dict)
             logger.info("use civitai format state dict")
+        elif "diffusion_model.blocks.0.cross_attn.k.lora_down.weight" in state_dict:
+            state_dict = self._from_lightning(state_dict)
+            logger.info("use lightning lora format state dict")
         else:
             state_dict = self._from_diffsynth(state_dict)
             logger.info("use diffsynth format state dict")
@@ -143,6 +172,92 @@ class WanVideoPipeline(BasePipeline):
             "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
         )
         super().load_loras(lora_list, fused, save_original_weight)
+
+    def load_loras_enhanced(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
+        """Enhanced LoRA loading that works with ParallelWrapper and sequence parallel"""
+        # Check constraints
+        assert self.config.tp_degree is None or self.config.tp_degree == 1, (
+            "load LoRA is not allowed when tensor parallel is enabled; "
+            "set tp_degree=None or tp_degree=1 during pipeline initialization"
+        )
+        assert not (self.config.use_fsdp and fused), (
+            "load fused LoRA is not allowed when fully sharded data parallel is enabled; "
+            "either load LoRA with fused=False or set use_fsdp=False during pipeline initialization"
+        )
+
+        # Check if this is running inside a ParallelWrapper worker
+        import torch.distributed as dist
+        is_parallel = hasattr(self.config, 'sp_ulysses_degree') and self.config.sp_ulysses_degree > 1
+
+        if is_parallel and dist.is_available() and dist.is_initialized():
+            # In sequence parallel mode, load LoRAs on all workers
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+            logger.info(f"Loading LoRAs in sequence parallel mode (rank {rank}/{world_size})")
+
+            # Ensure all workers have the same LoRA files
+            for lora_path, lora_scale in lora_list:
+                logger.info(f"[Rank {rank}] loading LoRA from {lora_path} with scale {lora_scale}")
+
+                # Load LoRA state dict on each worker - use CPU to avoid device conflicts
+                from diffsynth_engine.utils.loader import load_file
+                state_dict = load_file(lora_path, device="cpu")
+                lora_state_dict = self.lora_converter.convert(state_dict)
+
+                # Apply LoRAs to local models with proper device placement
+                for model_name, lora_params in lora_state_dict.items():
+                    logger.info(f"[Rank {rank}] Processing LoRA for model: {model_name}")
+                    # Lightning LoRA should only be applied to dit2 (low noise model)
+                    if model_name == "dit2":
+                        model = getattr(self, model_name, None)
+                        logger.info(f"[Rank {rank}] dit2 model exists: {model is not None}")
+                        if model is not None:
+                            # Get the actual device this model is on
+                            # In sequence parallel mode, use the configured device for the current rank
+                            if hasattr(model, 'parameters'):
+                                try:
+                                    # Try to get device from first parameter
+                                    model_device = next(model.parameters()).device
+                                    # If device is CPU but we're in parallel mode, use current CUDA device
+                                    if model_device.type == 'cpu' and torch.cuda.is_available():
+                                        current_device = torch.cuda.current_device()
+                                        model_device = torch.device(f'cuda:{current_device}')
+                                        logger.info(f"[Rank {rank}] Model parameters on CPU, using current CUDA device: {model_device}")
+                                except:
+                                    model_device = self.device
+                            else:
+                                model_device = self.device
+
+                            lora_args = []
+                            for key, param in lora_params.items():
+                                # Move LoRA parameters to the correct device
+                                lora_args.append(
+                                    {
+                                        "name": key,
+                                        "scale": lora_scale,
+                                        "rank": param["rank"],
+                                        "alpha": param["alpha"],
+                                        "up": param["up"].to(model_device),
+                                        "down": param["down"].to(model_device),
+                                        "device": model_device,
+                                        "dtype": self.dtype,
+                                        "save_original_weight": save_original_weight,
+                                    }
+                                )
+                            model.load_loras(lora_args, fused=fused)
+                            logger.info(f"[Rank {rank}] Applied LoRA to {model_name} (low noise model) on device {model_device}")
+                        else:
+                            logger.warning(f"[Rank {rank}] dit2 model not found, skipping LoRA loading")
+                    elif model_name == "dit":
+                        logger.info(f"[Rank {rank}] Skipping LoRA for {model_name} (high noise model) - Lightning LoRA is for low noise only")
+
+            # Synchronize all workers
+            dist.barrier()
+            logger.info(f"[Rank {rank}] LoRA loading synchronized across all workers")
+        else:
+            # Non-parallel mode, use standard method
+            logger.info("Loading LoRAs in non-parallel mode")
+            super().load_loras(lora_list, fused, save_original_weight)
 
     def unload_loras(self):
         self.dit.unload_loras()
@@ -456,13 +571,9 @@ class WanVideoPipeline(BasePipeline):
             low_noise_model_ckpt = [path for path in config.model_path if "low_noise_model" in path]
             if high_noise_model_ckpt and low_noise_model_ckpt:
                 logger.info(f"loading high noise model state dict from {high_noise_model_ckpt} ...")
-                dit_state_dict = cls.load_model_checkpoint(
-                    high_noise_model_ckpt, device="cpu", dtype=config.model_dtype
-                )
+                dit_state_dict = cls.load_model_checkpoint(high_noise_model_ckpt, device="cpu", dtype=config.model_dtype)
                 logger.info(f"loading low noise model state dict from {low_noise_model_ckpt} ...")
-                dit2_state_dict = cls.load_model_checkpoint(
-                    low_noise_model_ckpt, device="cpu", dtype=config.model_dtype
-                )
+                dit2_state_dict = cls.load_model_checkpoint(low_noise_model_ckpt, device="cpu", dtype=config.model_dtype)
         if dit_state_dict is None:
             logger.info(f"loading dit state dict from {config.model_path} ...")
             dit_state_dict = cls.load_model_checkpoint(config.model_path, device="cpu", dtype=config.model_dtype)
@@ -491,11 +602,7 @@ class WanVideoPipeline(BasePipeline):
         image_encoder_state_dict = None
         if config.image_encoder_path is not None:
             logger.info(f"loading state dict from {config.image_encoder_path} ...")
-            image_encoder_state_dict = cls.load_model_checkpoint(
-                config.image_encoder_path,
-                device="cpu",
-                dtype=config.image_encoder_dtype,
-            )
+            image_encoder_state_dict = cls.load_model_checkpoint(config.image_encoder_path, device="cpu", dtype=config.image_encoder_dtype)
 
         state_dicts = WanStateDicts(
             model=model_state_dict,
@@ -570,7 +677,10 @@ class WanVideoPipeline(BasePipeline):
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
             )
-            if config.use_fp8_linear:
+            if config.use_fp8_linear_optimized:
+                enable_fp8_linear_optimized(dit, low_memory_mode=config.fp8_low_memory_mode)
+                logger.info(f"Enabled optimized FP8 linear layers for WAN DiT (low_memory={config.fp8_low_memory_mode})")
+            elif config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
             dit2 = None
@@ -582,7 +692,10 @@ class WanVideoPipeline(BasePipeline):
                     dtype=config.model_dtype,
                     attn_kwargs=attn_kwargs,
                 )
-                if config.use_fp8_linear:
+                if config.use_fp8_linear_optimized:
+                    enable_fp8_linear_optimized(dit2, low_memory_mode=config.fp8_low_memory_mode)
+                    logger.info(f"Enabled optimized FP8 linear layers for WAN DiT2 (low_memory={config.fp8_low_memory_mode})")
+                elif config.use_fp8_linear:
                     enable_fp8_linear(dit2)
 
         pipe = cls(

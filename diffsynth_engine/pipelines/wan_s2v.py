@@ -25,6 +25,7 @@ from diffsynth_engine.tokenizers import WanT5Tokenizer
 from diffsynth_engine.utils.constants import WAN_TOKENIZER_CONF_PATH
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
+from diffsynth_engine.utils.fp8_linear_optimized import enable_fp8_linear_optimized
 from diffsynth_engine.utils.image import resize_and_center_crop
 from diffsynth_engine.utils.video import read_n_frames
 from diffsynth_engine.utils.parallel import ParallelWrapper
@@ -668,7 +669,10 @@ class WanSpeech2VideoPipeline(WanVideoPipeline):
                 dtype=config.model_dtype,
                 attn_kwargs=attn_kwargs,
             )
-            if config.use_fp8_linear:
+            if config.use_fp8_linear_optimized:
+                enable_fp8_linear_optimized(dit, low_memory_mode=config.fp8_low_memory_mode)
+                logger.info(f"Enabled optimized FP8 linear layers for WAN S2V DiT (low_memory={config.fp8_low_memory_mode})")
+            elif config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
         pipe = cls(

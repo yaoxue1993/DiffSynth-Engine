@@ -68,10 +68,12 @@ class BasePipeline:
     def load_loras(self, lora_list: List[Tuple[str, float]], fused: bool = True, save_original_weight: bool = False):
         for lora_path, lora_scale in lora_list:
             logger.info(f"loading lora from {lora_path} with scale {lora_scale}")
-            state_dict = load_file(lora_path, device=self.device)
+            state_dict = load_file(lora_path, device="cpu")  # Load to CPU first to avoid device conflicts
             lora_state_dict = self.lora_converter.convert(state_dict)
             for model_name, state_dict in lora_state_dict.items():
                 model = getattr(self, model_name)
+                # Get the actual device the model is on
+                model_device = next(model.parameters()).device if hasattr(model, 'parameters') else self.device
                 lora_args = []
                 for key, param in state_dict.items():
                     lora_args.append(
@@ -80,9 +82,9 @@ class BasePipeline:
                             "scale": lora_scale,
                             "rank": param["rank"],
                             "alpha": param["alpha"],
-                            "up": param["up"],
-                            "down": param["down"],
-                            "device": self.device,
+                            "up": param["up"].to(model_device),  # Move to model's device
+                            "down": param["down"].to(model_device),  # Move to model's device
+                            "device": model_device,  # Use model's actual device
                             "dtype": self.dtype,
                             "save_original_weight": save_original_weight,
                         }

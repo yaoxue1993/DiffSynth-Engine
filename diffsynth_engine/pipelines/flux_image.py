@@ -28,6 +28,7 @@ from diffsynth_engine.utils.constants import FLUX_TOKENIZER_1_CONF_PATH, FLUX_TO
 from diffsynth_engine.utils.parallel import ParallelWrapper
 from diffsynth_engine.utils import logging
 from diffsynth_engine.utils.fp8_linear import enable_fp8_linear
+from diffsynth_engine.utils.fp8_linear_optimized import enable_fp8_linear_optimized
 from diffsynth_engine.utils.download import fetch_model
 from diffsynth_engine.utils.platform import empty_cache
 from diffsynth_engine.utils.constants import FLUX_DIT_CONFIG_FILE
@@ -539,7 +540,10 @@ class FluxImagePipeline(BasePipeline):
                     in_channel=config.control_type.get_in_channel(),
                     attn_kwargs=attn_kwargs,
                 )
-            if config.use_fp8_linear:
+            if config.use_fp8_linear_optimized:
+                enable_fp8_linear_optimized(dit, low_memory_mode=config.fp8_low_memory_mode)
+                logger.info(f"Enabled optimized FP8 linear layers for FLUX DiT (low_memory={config.fp8_low_memory_mode})")
+            elif config.use_fp8_linear:
                 enable_fp8_linear(dit)
 
         pipe = cls(
